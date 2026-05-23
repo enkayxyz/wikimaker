@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.sqlite
+*.log
+output/
+state/
+telemetry/
+*.zip

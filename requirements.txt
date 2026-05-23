@@ -1,0 +1,8 @@
+google-adk>=2.0.0b1,<3
+opentelemetry-api>=1.24.0
+opentelemetry-sdk>=1.24.0
+python-dotenv>=1.0.1
+pydantic>=2.7.0
+pandas>=2.2.0
+rouge-score>=0.1.2
+google-genai>=1.40.0
