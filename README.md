@@ -103,6 +103,8 @@ Next steps:
 - run a small end-to-end corpus slice before the full wiki build
 - verify source backlinks and wiki-set cross-links in the generated output
 - keep the corpus privacy-preserving and local-first
+- wiki-os-inspired next release plan: `/Users/enkay/dev/wikimaker/docs/wiki-os-borrowing-plan.md`
+- default decision: borrow UX/discovery ideas only; do not merge the full wiki-os codebase
 
 WAXtrctr / WhatsApp extractor:
 - `python /Users/enkay/dev/wikimaker/whatsapp_backup_extractor.py` uses the latest iPhone backup automatically and writes to `~/extracts/whatsapp`

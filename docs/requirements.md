@@ -145,6 +145,30 @@ WikiMaker should support a verification pass that checks:
 - No fallback non-AI wiki generation.
 - No direct dependency on Google model APIs for inference.
 
+## Next-release direction
+
+WikiMaker's next release should borrow selective discovery and navigation ideas from wiki-os without merging codebases.
+
+Priority 2 borrow list:
+- corpus dashboard / "what matters here?" view
+- persistent search and fast navigation
+- page-level relationship surfacing
+- explicit taxonomy discipline
+- low-friction onboarding
+
+Priority 1 borrow list:
+- graph exploration view
+- stats view
+
+Priority -1 do-not-borrow list:
+- external fetch defaults such as Wikipedia lookups and Google Fonts
+- mutable note-browser trust model
+- full repo merge or TS/React/server stack merge
+- hidden outbound traffic or silent remote lookups
+
+Detailed requirements, checklist, and success criteria live in:
+- `docs/wiki-os-borrowing-plan.md`
+
 ## Acceptance criteria
 
 A v0001 implementation is acceptable if it can:

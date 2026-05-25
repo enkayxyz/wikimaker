@@ -15,6 +15,9 @@ Use this skill when the user provides a folder tree containing Markdown files. T
 
 This is a compiler and curator workflow, not an extraction workflow.
 
+See also:
+- `/Users/enkay/dev/wikimaker/docs/wiki-os-borrowing-plan.md` for the next-release borrow / do-not-borrow requirements and success criteria.
+
 ## Core product behavior
 
 Input:
