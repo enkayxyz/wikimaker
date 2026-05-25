@@ -9,6 +9,7 @@ from opentelemetry import trace
 
 from wikimaker_openai import GenerationPlan, AnalysisPlan, VerificationPlan, run_pipeline
 from wikimaker_config import WikiMakerConfig
+from wikimaker_discovery import write_discovery_views
 from wikimaker_observability import configure_adk_tracing, run_adk_self_eval
 from wikimaker_scanner import scan_corpus
 from wikimaker_state import diff_snapshots, load_snapshot, save_snapshot
@@ -85,8 +86,7 @@ def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict
         if record.get("error"):
             continue
         page = generation_by_path.get(rel_path, {})
-        out_path = config.output_root / "sources" / Path(rel_path).with_suffix(".md")
-        out_path = out_path.with_name(out_path.name.replace("/", "__"))
+        out_path = config.output_root / "sources" / _source_stub_name(rel_path)
         content = [
             f"# {page.get('title') or record.get('title') or Path(rel_path).stem}",
             "",
@@ -98,6 +98,12 @@ def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict
             f"- Corpus kind: `{record.get('source_kind') or page.get('source_kind') or ''}`",
             f"- Extracted at: `{record.get('extracted_at') or page.get('extracted_at') or ''}`",
             f"- Original source URL: `{record.get('source_url') or page.get('source_url') or ''}`",
+            "",
+            "## Navigation",
+            "- [Root index](../_root_index.md)",
+            "- [Dashboard](../_dashboard.md)",
+            "- [Stats](../_stats.md)",
+            "- [Search index](../_search.md)",
             "",
             "## Summary",
             page.get("summary") or f"Source page for {record.get('title') or Path(rel_path).stem}.",
@@ -149,6 +155,24 @@ def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict
             content.append("- _None found_")
         content.extend([
             "",
+            "## Topics",
+        ])
+        topics = page.get("topics") or []
+        if topics:
+            content.extend(f"- {topic}" for topic in topics)
+        else:
+            content.append("- _None found_")
+        content.extend([
+            "",
+            "## Entities",
+        ])
+        entities = page.get("entities") or []
+        if entities:
+            content.extend(f"- {entity}" for entity in entities)
+        else:
+            content.append("- _None found_")
+        content.extend([
+            "",
             "## Related pages",
         ])
         related_pages = page.get("related_pages") or []
@@ -180,6 +204,12 @@ def write_root_index(config: WikiMakerConfig, pipeline: dict[str, Any]) -> Path:
         "# WikiMaker Root Index",
         "",
         generation.get("root_index_summary") or analysis.get("corpus_summary") or "WikiMaker output index.",
+        "",
+        "## Navigation",
+        "- [_Dashboard](_dashboard.md)",
+        "- [_Stats](_stats.md)",
+        "- [_Search index](_search.md)",
+        "- [_Graph data](_graph.json)",
         "",
         "## Corpus kinds",
     ]
@@ -323,6 +353,10 @@ def write_folder_docs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[
     return written
 
 
+def _source_stub_name(rel_path: str) -> str:
+    return rel_path.replace("/", "__")
+
+
 def _status_for(rel_path: str, diff: dict[str, list[str]]) -> str:
     for label in ("added", "changed", "removed", "unchanged"):
         if rel_path in diff.get(label, []):
@@ -431,6 +465,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
             snapshot_path = None
             wiki_set_paths: list[Path] = []
             folder_doc_paths: list[Path] = []
+            discovery_paths: dict[str, Path] = {}
         else:
             with tracer.start_as_current_span("wikimaker.publish"):
                 report_path = write_change_report(config, scan, diff, pipeline)
@@ -438,6 +473,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 source_stub_paths = write_source_stubs(config, scan, diff, pipeline.get("generation", {}))
                 wiki_set_paths = write_wiki_set_pages(config, pipeline, scan)
                 folder_doc_paths = write_folder_docs(config, scan, diff, pipeline)
+                discovery_paths = write_discovery_views(config, scan, diff, pipeline)
                 snapshot_path = save_snapshot(config.state_root, current)
 
         if config.enable_adk_eval:
@@ -473,6 +509,10 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 "source_stubs": [str(p) for p in source_stub_paths],
                 "wiki_set_pages": [str(p) for p in wiki_set_paths],
                 "folder_docs": [str(p) for p in folder_doc_paths],
+                "dashboard": str(discovery_paths.get("dashboard", "")) if discovery_paths else "",
+                "stats": str(discovery_paths.get("stats", "")) if discovery_paths else "",
+                "search": str(discovery_paths.get("search", "")) if discovery_paths else "",
+                "graph": str(discovery_paths.get("graph", "")) if discovery_paths else "",
                 "adk_trace_db": config.adk_trace_db,
                 "adk_eval_dir": config.adk_eval_dir,
             },

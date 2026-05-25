@@ -38,6 +38,7 @@ def build_telemetry(config: dict[str, Any], diff: dict[str, list[str]], scan: di
             "scaffold_phase",
             "source-summary-stubs-enabled",
             "full_llm_synthesis_pending",
+            "discovery-views-enabled",
         ],
     }
 

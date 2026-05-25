@@ -89,6 +89,10 @@ Model knobs:
 Useful outputs:
 - `output/_change_report.md` — run summary and scan details
 - `output/_root_index.md` — top-level wiki index
+- `output/_dashboard.md` — corpus overview / most connected pages / recent additions
+- `output/_stats.md` — corpus health and counts
+- `output/_search.md` — jump table for source pages and wiki sets
+- `output/_graph.json` — graph data for future UI work
 - `output/sources/` — one source-summary page per Markdown file
 - `output/wiki-sets/` — wiki-set index pages
 - `output/folders/` — folder gist.md and ledger.md memory

@@ -23,9 +23,12 @@ class SourcePagePlan(BaseModel):
     source_paths: list[str] = Field(default_factory=list, description="Direct source markdown paths used for this page")
     external_links: list[str] = Field(default_factory=list, description="Original URLs or external references")
     tags: list[str] = Field(default_factory=list, description="Broad tags attached to the page")
+    topics: list[str] = Field(default_factory=list, description="Specific topics represented on the page")
+    entities: list[str] = Field(default_factory=list, description="Named entities or actors mentioned on the page")
     related_pages: list[str] = Field(default_factory=list, description="Suggested internal links")
     used_in: list[str] = Field(default_factory=list, description="Higher-level wiki pages that use this source page")
     key_snippets: list[str] = Field(default_factory=list, description="Important quotes or evidence snippets")
+    breadcrumbs: list[str] = Field(default_factory=list, description="Optional breadcrumb trail for navigation")
 
 
 class WikiSetPlan(BaseModel):
@@ -39,6 +42,8 @@ class AnalysisPlan(BaseModel):
     corpus_kinds: list[str] = Field(default_factory=list, description="Detected corpus buckets such as bills and whatsapp")
     wiki_sets: list[WikiSetPlan] = Field(default_factory=list)
     source_page_candidates: list[SourcePagePlan] = Field(default_factory=list)
+    topic_clusters: list[str] = Field(default_factory=list, description="Detected topic clusters across the corpus")
+    entity_clusters: list[str] = Field(default_factory=list, description="Detected entity clusters across the corpus")
     duplicate_clusters: list[str] = Field(default_factory=list)
     contradiction_clusters: list[str] = Field(default_factory=list)
     reorg_suggestions: list[str] = Field(default_factory=list)
@@ -49,6 +54,8 @@ class GenerationPlan(BaseModel):
     wiki_set_pages: list[WikiSetPlan] = Field(default_factory=list)
     source_pages: list[SourcePagePlan] = Field(default_factory=list)
     root_index_summary: str = Field(default="")
+    dashboard_summary: str = Field(default="", description="High-level corpus dashboard summary")
+    stats_summary: str = Field(default="", description="Corpus stats summary")
     needed_followups: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
@@ -198,7 +205,7 @@ def _parse_model_output(text: str, model_cls: type[T]) -> T:
 def _analysis_prompt(scan_prompt: dict[str, Any]) -> str:
     return (
         "Stage 1: generate individual source-page plans for each Markdown file. "
-        "Return strict JSON only. Infer the corpus kinds present (for example, bills and whatsapp), and capture the source page title, summary, platform, source kind, timestamps, links, tags, snippets, what higher-level pages may use it later, and a brief corpus summary. "
+        "Return strict JSON only. Infer the corpus kinds present (for example, bills and whatsapp), and capture the source page title, summary, platform, source kind, timestamps, links, tags, topics, entities, snippets, what higher-level pages may use it later, and a brief corpus summary. "
         "Preserve provenance and keep the output compact.\n\n"
         f"SCAN_JSON:\n{json.dumps(scan_prompt, indent=2, sort_keys=True)}"
     )
@@ -207,7 +214,7 @@ def _analysis_prompt(scan_prompt: dict[str, Any]) -> str:
 def _generation_prompt(scan_prompt: dict[str, Any], analysis: AnalysisPlan) -> str:
     return (
         "Stage 2: identify commonality across the source pages and update the source-page plans with new insights. Return strict JSON only. "
-        "Cluster related source pages into wiki sets, separate distinct corpora when needed (for example, bills vs whatsapp), identify duplicates, contradictions, and evolving topics, propose wiki-set page names, draft a concise root-index summary, and fill each source page's used-in links when relevant. "
+        "Cluster related source pages into wiki sets, separate distinct corpora when needed (for example, bills vs whatsapp), identify duplicates, contradictions, and evolving topics, propose wiki-set page names, draft concise root-index, dashboard, and stats summaries, and fill each source page's used-in links when relevant. "
         "Preserve backlinks and evidence.\n\n"
         f"SCAN_JSON:\n{json.dumps(scan_prompt, indent=2, sort_keys=True)}\n\n"
         f"ANALYSIS_JSON:\n{json.dumps(analysis.model_dump(), indent=2, sort_keys=True)}"
@@ -315,6 +322,8 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
             corpus_kinds=seen_kinds,
             wiki_sets=wiki_sets,
             source_page_candidates=source_pages,
+            topic_clusters=[str(item.get("topic") or item.get("topic_cluster") or "") for item in items if isinstance(item, dict) and (item.get("topic") or item.get("topic_cluster"))],
+            entity_clusters=[str(item.get("entity") or item.get("entity_cluster") or "") for item in items if isinstance(item, dict) and (item.get("entity") or item.get("entity_cluster"))],
             duplicate_clusters=[],
             contradiction_clusters=[],
             reorg_suggestions=[],
@@ -347,6 +356,8 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
             wiki_set_pages=[WikiSetPlan(**wiki_set.model_dump()) for wiki_set in analysis_result.wiki_sets],
             source_pages=list(analysis_result.source_page_candidates),
             root_index_summary=str(summary.get("corpus_summary") or raw_generation.get("root_index_summary") or analysis_result.corpus_summary or ""),
+            dashboard_summary=str(raw_generation.get("dashboard_summary") or analysis_result.corpus_summary or ""),
+            stats_summary=str(raw_generation.get("stats_summary") or ""),
             needed_followups=[str(item) for item in raw_generation.get("reorg_suggestions", []) if item],
             confidence=float(summary.get("confidence", analysis_result.confidence) or analysis_result.confidence),
         )

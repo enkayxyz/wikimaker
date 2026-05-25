@@ -97,6 +97,10 @@ WikiMaker should generate:
 - one source-summary page per Markdown file
 - one or more wiki-set pages
 - root index pages
+- a corpus dashboard page
+- a stats page
+- a search/jump-table page
+- a graph data file for future UI layers
 - folder-level `gist.md`
 - folder-level `ledger.md`
 - a change report

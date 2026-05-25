@@ -79,6 +79,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"- eval: skipped ({eval_result.get('error') or 'disabled'})")
     print(f"- report: {result['paths']['report']}")
+    print(f"- dashboard: {result['paths'].get('dashboard', '')}")
+    print(f"- stats: {result['paths'].get('stats', '')}")
+    print(f"- search: {result['paths'].get('search', '')}")
+    print(f"- graph: {result['paths'].get('graph', '')}")
     print(f"- telemetry: {result['paths']['telemetry']}")
     return 0
 
