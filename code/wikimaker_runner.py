@@ -9,7 +9,8 @@ from opentelemetry import trace
 
 from wikimaker_openai import GenerationPlan, AnalysisPlan, VerificationPlan, run_pipeline
 from wikimaker_config import WikiMakerConfig
-from wikimaker_discovery import write_discovery_views
+from wikimaker_discovery import write_discovery_views, _source_stub_name, _wiki_set_dir_name
+from wikimaker_browser import write_browser_frontend
 from wikimaker_observability import configure_adk_tracing, run_adk_self_eval
 from wikimaker_scanner import scan_corpus
 from wikimaker_state import diff_snapshots, load_snapshot, save_snapshot
@@ -24,6 +25,7 @@ def ensure_workspace(config: WikiMakerConfig) -> None:
     Path(config.adk_trace_db).expanduser().parent.mkdir(parents=True, exist_ok=True)
     (config.output_root / "sources").mkdir(parents=True, exist_ok=True)
     (config.output_root / "wiki-sets").mkdir(parents=True, exist_ok=True)
+    (config.output_root / "browser").mkdir(parents=True, exist_ok=True)
 
 
 def write_change_report(
@@ -104,6 +106,7 @@ def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict
             "- [Dashboard](../_dashboard.md)",
             "- [Stats](../_stats.md)",
             "- [Search index](../_search.md)",
+            "- [Browser UI](../browser/index.html)",
             "",
             "## Summary",
             page.get("summary") or f"Source page for {record.get('title') or Path(rel_path).stem}.",
@@ -209,6 +212,7 @@ def write_root_index(config: WikiMakerConfig, pipeline: dict[str, Any]) -> Path:
         "- [_Dashboard](_dashboard.md)",
         "- [_Stats](_stats.md)",
         "- [_Search index](_search.md)",
+        "- [_Browser UI](browser/index.html)",
         "- [_Graph data](_graph.json)",
         "",
         "## Corpus kinds",
@@ -252,7 +256,7 @@ def write_wiki_set_pages(config: WikiMakerConfig, pipeline: dict[str, Any], scan
         if not isinstance(wiki_set, dict):
             continue
         set_name = str(wiki_set.get("name", "unnamed")).strip() or "unnamed"
-        out_dir = config.output_root / "wiki-sets" / set_name
+        out_dir = config.output_root / "wiki-sets" / _wiki_set_dir_name(set_name)
         out_path = out_dir / "_index.md"
         page_titles = [str(page) for page in (wiki_set.get("pages") or [])]
         matching_sources = [page for page in source_pages if isinstance(page, dict) and page.get("title") in page_titles]
@@ -354,7 +358,7 @@ def write_folder_docs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[
 
 
 def _source_stub_name(rel_path: str) -> str:
-    return rel_path.replace("/", "__")
+    return "__".join(part.replace(":", "_").replace("?", "_").replace("*", "_").replace("/", "_") for part in Path(rel_path).parts)
 
 
 def _status_for(rel_path: str, diff: dict[str, list[str]]) -> str:
@@ -474,6 +478,8 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 wiki_set_paths = write_wiki_set_pages(config, pipeline, scan)
                 folder_doc_paths = write_folder_docs(config, scan, diff, pipeline)
                 discovery_paths = write_discovery_views(config, scan, diff, pipeline)
+                browser_path = write_browser_frontend(config, scan, diff, pipeline)
+                discovery_paths["browser"] = browser_path
                 snapshot_path = save_snapshot(config.state_root, current)
 
         if config.enable_adk_eval:
@@ -513,6 +519,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 "stats": str(discovery_paths.get("stats", "")) if discovery_paths else "",
                 "search": str(discovery_paths.get("search", "")) if discovery_paths else "",
                 "graph": str(discovery_paths.get("graph", "")) if discovery_paths else "",
+                "browser": str(discovery_paths.get("browser", "")) if discovery_paths else "",
                 "adk_trace_db": config.adk_trace_db,
                 "adk_eval_dir": config.adk_eval_dir,
             },

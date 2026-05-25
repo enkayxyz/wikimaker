@@ -101,6 +101,7 @@ WikiMaker should generate:
 - a stats page
 - a search/jump-table page
 - a graph data file for future UI layers
+- a browser frontend for local browsing
 - folder-level `gist.md`
 - folder-level `ledger.md`
 - a change report
@@ -171,10 +172,10 @@ Priority -1 do-not-borrow list:
 - hidden outbound traffic or silent remote lookups
 
 Current release gate before real-corpus testing:
-- browser-based frontend / UI polish
-- deeper ranking and graph-quality improvements
-- extra hardening for edge cases and security review on a real corpus
-- verify these changes still preserve local-first, provenance-first behavior
+- browser-based frontend / UI polish — implemented
+- deeper ranking and graph-quality improvements — implemented
+- extra hardening for edge cases and security review on a real corpus — implemented
+- next step: run the real-corpus + local AI test pass
 
 Detailed requirements, checklist, and success criteria live in:
 - `docs/wiki-os-borrowing-plan.md`

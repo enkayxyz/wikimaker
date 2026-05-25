@@ -83,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"- stats: {result['paths'].get('stats', '')}")
     print(f"- search: {result['paths'].get('search', '')}")
     print(f"- graph: {result['paths'].get('graph', '')}")
+    print(f"- browser: {result['paths'].get('browser', '')}")
     print(f"- telemetry: {result['paths']['telemetry']}")
     return 0
 

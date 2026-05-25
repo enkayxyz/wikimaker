@@ -333,6 +333,8 @@ Before coding, convert this plan into the next implementation checklist for Wiki
 
 ## 13) Current release gate
 
+Status: implemented in the codebase and smoke-tested.
+
 Before testing on a real corpus with local AI, finish these three items:
 1. Browser-based frontend / UI polish
    - surface dashboard, stats, search, and graph views in a clean browser UI

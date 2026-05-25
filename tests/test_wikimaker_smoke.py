@@ -11,7 +11,8 @@ if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
 from wikimaker_config import WikiMakerConfig
-from wikimaker_discovery import build_discovery_views, write_discovery_views
+from wikimaker_discovery import build_discovery_views, write_discovery_views, _source_stub_name
+from wikimaker_browser import write_browser_frontend
 from wikimaker_runner import write_source_stubs
 from wikimaker_scanner import scan_corpus
 from wikimaker_state import diff_snapshots
@@ -163,6 +164,8 @@ See [Reference](https://example.com/ref).
             }
             views = build_discovery_views(scan, diff, pipeline)
             self.assertEqual(len(views["graph"]["nodes"]), 3)
+            self.assertEqual(views["graph"]["nodes"][0]["label"], "Beta")
+            self.assertIn("score", views["graph"]["nodes"][0])
             paths = write_discovery_views(config, scan, diff, pipeline)
             self.assertTrue(paths["dashboard"].exists())
             self.assertTrue(paths["stats"].exists())
@@ -174,6 +177,12 @@ See [Reference](https://example.com/ref).
             self.assertIn("Alpha", paths["search"].read_text(encoding="utf-8"))
             self.assertIn("Chat set", paths["search"].read_text(encoding="utf-8"))
 
+            browser_path = write_browser_frontend(config, scan, diff, pipeline)
+            self.assertTrue(browser_path.exists())
+            browser_text = browser_path.read_text(encoding="utf-8")
+            self.assertIn("WikiMaker Browser", browser_text)
+            self.assertIn("sourceGrid", browser_text)
+
             source_stubs = write_source_stubs(config, scan, diff, pipeline["generation"])
             self.assertTrue(any(path.name == "notes__a.md" for path in source_stubs))
             stub_path = output_root / "sources" / "notes__a.md"
@@ -182,6 +191,54 @@ See [Reference](https://example.com/ref).
             self.assertIn("## Navigation", stub_text)
             self.assertIn("## Topics", stub_text)
             self.assertIn("## Entities", stub_text)
+
+
+    def test_source_stub_names_are_sanitized_for_weird_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus_root = Path(tmp) / "corpus"
+            output_root = Path(tmp) / "output"
+            state_root = Path(tmp) / "state"
+            telemetry_root = Path(tmp) / "telemetry"
+            config = WikiMakerConfig(
+                corpus_root=corpus_root,
+                output_root=output_root,
+                state_root=state_root,
+                telemetry_root=telemetry_root,
+            )
+            scan = {
+                "corpus_root": str(corpus_root),
+                "files": {
+                    "notes/weird:name?.md": {
+                        "path": "notes/weird:name?.md",
+                        "title": "Weird",
+                        "sha256": "abc",
+                        "size": 9,
+                        "mtime_ns": 1,
+                        "line_count": 2,
+                        "headings": [],
+                        "source_links": [],
+                        "source_kind": "",
+                        "platform": "",
+                        "source_url": "",
+                        "extracted_at": "",
+                    },
+                },
+            }
+            diff = {"added": ["notes/weird:name?.md"], "changed": [], "removed": [], "unchanged": []}
+            generation = {
+                "source_pages": [
+                    {
+                        "path": "notes/weird:name?.md",
+                        "title": "Weird",
+                        "summary": "Weird summary",
+                        "source_paths": ["notes/weird:name?.md"],
+                    }
+                ]
+            }
+            paths = write_source_stubs(config, scan, diff, generation)
+            expected = _source_stub_name("notes/weird:name?.md")
+            self.assertTrue((output_root / "sources" / expected).exists())
+            self.assertTrue(any(path.name == expected for path in paths))
 
 
 if __name__ == "__main__":

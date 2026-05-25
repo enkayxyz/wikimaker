@@ -93,6 +93,7 @@ Useful outputs:
 - `output/_stats.md` — corpus health and counts
 - `output/_search.md` — jump table for source pages and wiki sets
 - `output/_graph.json` — graph data for future UI work
+- `output/browser/index.html` — polished local browser frontend
 - `output/sources/` — one source-summary page per Markdown file
 - `output/wiki-sets/` — wiki-set index pages
 - `output/folders/` — folder gist.md and ledger.md memory
