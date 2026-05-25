@@ -170,6 +170,12 @@ Priority -1 do-not-borrow list:
 - full repo merge or TS/React/server stack merge
 - hidden outbound traffic or silent remote lookups
 
+Current release gate before real-corpus testing:
+- browser-based frontend / UI polish
+- deeper ranking and graph-quality improvements
+- extra hardening for edge cases and security review on a real corpus
+- verify these changes still preserve local-first, provenance-first behavior
+
 Detailed requirements, checklist, and success criteria live in:
 - `docs/wiki-os-borrowing-plan.md`
 

@@ -331,3 +331,22 @@ Before coding, convert this plan into the next implementation checklist for Wiki
 - exact outputs to verify
 - exact acceptance tests to run
 
+## 13) Current release gate
+
+Before testing on a real corpus with local AI, finish these three items:
+1. Browser-based frontend / UI polish
+   - surface dashboard, stats, search, and graph views in a clean browser UI
+   - keep every page one click away from its source/provenance
+2. Deeper ranking / graph quality improvements
+   - improve node ordering, centrality, and neighborhood relevance
+   - make the graph more useful for cross-corpus insight discovery
+3. Extra hardening for edge cases and security review
+   - validate against weird filenames, duplicate titles, missing metadata, and large corpora
+   - confirm no silent outbound fetches or unsafe behavior on a real corpus
+
+Acceptance gate:
+- the UI is pleasant enough to browse
+- graph/search ranking feels meaningfully better than the first pass
+- security review passes on a real corpus
+- only then do we move to real corpus + local AI testing
+
