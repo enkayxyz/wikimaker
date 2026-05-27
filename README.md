@@ -29,7 +29,7 @@ WikiMaker:
 ## Architecture
 
 Current stack:
-- Python 3
+- Python 3.11+
 - Google ADK 2 for orchestration and observability
 - local OpenAI-compatible API surface for model calls
 - Ollama on the LAN as the default inference backend
@@ -41,6 +41,7 @@ Important implementation facts:
 - ADK import namespace: `google.adk`
 - working package line in this environment: `google-adk==2.0.0b1`
 - local inference endpoint: `http://192.168.86.11:11434`
+- Python runtime: 3.11 or newer
 - real-corpus runs are intentionally local-only
 - there is no deterministic non-AI fallback wiki-generation path
 
@@ -85,10 +86,13 @@ Suggested environment variables:
 - `WIKIMAKER_ENABLE_ADK_EVAL`
 - `WIKIMAKER_ADK_TRACE_DB`
 - `WIKIMAKER_ADK_EVAL_DIR`
+- `WIKIMAKER_ALLOW_REMOTE_LLM`
+- `WIKIMAKER_PROMPT_PROFILE`
 - `OPENAI_BASE_URL`
 - `OPENAI_API_KEY` or `OSAURUS_API_KEY` if using an OpenAI-compatible backend instead of plain Ollama
 
 Recommended local setup:
+- conda env: `wikimaker`
 - provider: `ollama`
 - API style: `ollama`
 - base URL: `http://192.168.86.11:11434`
@@ -98,19 +102,26 @@ Recommended local setup:
 
 Basic run:
 ```bash
-python wikimaker.py --corpus-root <path-to-markdown-corpus>
+conda run -n wikimaker python wikimaker.py --corpus-root <path-to-markdown-corpus>
+```
+
+Create/update the environment:
+
+```bash
+conda env create -f environment.yml
+conda run -n wikimaker python -m pip install -r requirements.txt
 ```
 
 Dry run:
 ```bash
-python wikimaker.py \
+conda run -n wikimaker python wikimaker.py \
   --corpus-root <path-to-markdown-corpus> \
   --dry-run
 ```
 
 With explicit roots:
 ```bash
-python wikimaker.py \
+conda run -n wikimaker python wikimaker.py \
   --corpus-root <path-to-markdown-corpus> \
   --output-root <path-to-output> \
   --state-root <path-to-state> \
@@ -119,6 +130,7 @@ python wikimaker.py \
 
 Mac helper:
 ```bash
+/Users/enkay/dev/wikimaker/wikimakerctl.sh fresh
 ./wikimakerctl.sh run
 ./wikimakerctl.sh start
 ./wikimakerctl.sh logs
@@ -126,6 +138,8 @@ Mac helper:
 ./wikimakerctl.sh fresh
 ./wikimakerctl.sh fresh-start
 ```
+
+For the real default corpus, `wikimakerctl.sh fresh` is the canonical full rebuild path: it resets only generated output/state/telemetry, never the source extracts, then runs in the foreground.
 
 ## What the outputs contain
 
@@ -136,12 +150,46 @@ Common output paths:
 - `_stats.md` — corpus health and counts
 - `_search.md` — jump table for source pages and wiki sets
 - `_graph.json` — graph data for future UI layers
+- `_privacy.md` — model endpoint and browser network boundary report
+- `_health.md` — wiki lint/health findings
 - `browser/index.html` — local browser frontend
 - `sources/` — one source-summary page per Markdown file
 - `wiki-sets/` — wiki-set pages and indexes
 - `folders/` — folder-level `gist.md` and `ledger.md`
 - `state/corpus_snapshot.json` — change tracking snapshot
 - `telemetry/latest.json` — telemetry summary
+
+## Prompt profiles
+
+WikiMaker automatically assigns a corpus kind to each Markdown file, then applies a prompt profile. Built-in profiles cover the current corpus buckets (`whatsapp_chats`, `ai_conversations`, and `financial_documents`) plus planned 360-degree sources: contacts, calendars, meeting notes, recording transcripts, emails, iMessages, personal notes, Google Docs, code repositories, project artifacts, index/ledger pages, and mixed notes. Legacy `chats` and `bills_documents` profile names remain as aliases.
+
+To override behavior, add `wikimaker.profiles.json` or `wikimaker.profiles.yaml` next to the corpus root, or set `WIKIMAKER_PROMPT_PROFILE`.
+
+```json
+{
+  "profiles": {
+    "family_archive": {
+      "corpus_kind": "whatsapp_chats",
+      "guidance": "Emphasize people, dates, decisions, relationships, and unresolved follow-ups.",
+      "extraction_fields": ["people", "dates", "decisions", "relationships"]
+    }
+  },
+  "folder_rules": [
+    {"path": "whatsapp", "profile": "family_archive", "corpus_kind": "whatsapp_chats"},
+    {"path": "ai-conversations", "profile": "ai_conversations", "corpus_kind": "ai_conversations"},
+    {"path": "financial", "profile": "financial_documents", "corpus_kind": "financial_documents"}
+  ]
+}
+```
+
+## Privacy boundary
+
+WikiMaker classifies the model endpoint before running:
+- `local` means this machine
+- `lan` means a private-network endpoint
+- `remote` means DNS/public internet risk
+
+Remote endpoints are refused unless `WIKIMAKER_ALLOW_REMOTE_LLM=1` or `--allow-remote-llm` is set. The generated browser remains static: no remote fonts, image lookups, analytics, or hidden fetches.
 
 ## Documentation
 
@@ -183,11 +231,9 @@ What works now:
 - smoke tests covering config, scanning, prompts, discovery, browser, and telemetry
 
 What still needs stronger work:
-- browser calmness and hierarchy
-- corpus-aware synthesis quality
-- backlinks and related-page surfacing
-- distinguishing content pages from navigation pages
-- better ranking so substantive pages appear before scaffolding
+- real-corpus evaluation of profile-guided synthesis quality
+- deeper visual QA of the WikiOS-inspired browser experience
+- larger-corpus performance tuning for graph and health checks
 
 ## Wiki-os guidance
 

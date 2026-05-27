@@ -7,9 +7,19 @@ import os
 from pathlib import Path
 from typing import Any
 
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+try:  # pragma: no cover - optional observability dependency
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    OTEL_AVAILABLE = True
+    OTEL_IMPORT_ERROR = None
+except Exception as exc:  # pragma: no cover - depends on environment
+    trace = None  # type: ignore[assignment]
+    Resource = None  # type: ignore[assignment]
+    BatchSpanProcessor = None  # type: ignore[assignment]
+    OTEL_AVAILABLE = False
+    OTEL_IMPORT_ERROR = exc
 
 
 
@@ -65,6 +75,9 @@ def configure_adk_tracing(config: dict[str, Any]) -> dict[str, Any]:
 
     if not enabled:
         result["error"] = "ADK tracing disabled in config."
+        return result
+    if not OTEL_AVAILABLE:
+        result["error"] = f"OpenTelemetry unavailable; tracing disabled: {OTEL_IMPORT_ERROR}"
         return result
     if not ADK_AVAILABLE:
         result["error"] = "ADK unavailable; cannot configure tracing."

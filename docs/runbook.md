@@ -36,10 +36,20 @@ WIKIMAKER_REVIEW_MODEL=gemma4:e4b-mlx
 
 Use your local Ollama models for the stage 1 source-page pass, stage 2 commonality pass, and stage 3 verification pass.
 
+WikiMaker requires Python 3.11 or newer. Use the dedicated `wikimaker` conda environment.
+
+Create/update runtime and test dependencies with:
+
+```bash
+cd /Users/enkay/dev/wikimaker
+conda env create -f environment.yml
+conda run -n wikimaker python -m pip install -r requirements.txt
+```
+
 ## Command
 
 ```bash
-python wikimaker.py --corpus-root /path/to/corpus
+conda run -n wikimaker python wikimaker.py --corpus-root /path/to/corpus
 ```
 
 Optional flags may override env vars:
@@ -52,16 +62,26 @@ Optional flags may override env vars:
 - `--review-model`
 - `--use-adk`
 - `--dry-run`
+- `--allow-remote-llm`
+- `--prompt-profile`
 
 ## Mac interactive helper
 
-For the FileAnalyze corpus setup on macOS, the helper now defaults to your real corpus and output roots, so you can run it with no extra parameters:
+For the default macOS corpus setup, the helper points at your configured corpus and output roots, so you can run it with no extra parameters:
 
 ```bash
-/Users/enkay/dev/wikimaker/wikimakerctl.sh run
+/Users/enkay/dev/wikimaker/wikimakerctl.sh fresh
 ```
 
-It prints the chosen corpus/output/state/telemetry/model settings, asks for confirmation, verifies the local Ollama server and model, and then runs in the foreground with live progress.
+`fresh` is the canonical full rebuild command for your real corpus. It resets generated output/state/telemetry only, keeps the source extracts read-only, prints the chosen corpus/output/state/telemetry/model settings, asks for confirmation, verifies the local Ollama server and model, and then runs in the foreground with live progress.
+
+After a successful build, inspect:
+- `output/_privacy.md`
+- `output/_health.md`
+- `output/browser/index.html`
+- `output/browser/data.json`
+
+Remote model endpoints are refused unless `WIKIMAKER_ALLOW_REMOTE_LLM=1` or `--allow-remote-llm` is set. Use that only after reviewing the leak boundary.
 
 Background mode and logs:
 
@@ -87,7 +107,14 @@ Reset semantics:
 - asks for a typed confirmation phrase unless `WIKIMAKER_ASSUME_YES=1` is set
 - leaves `/tmp/wikimaker.log` alone; `start` truncates it on the next run
 
-The helper pins the local Ollama endpoint to `http://192.168.86.11:11434`, uses the `FileAnalyze` conda env, and writes its PID/log to `/tmp`.
+The helper pins the local Ollama endpoint to `http://192.168.86.11:11434`, uses the `wikimaker` conda env by default, and writes its PID/log to `/tmp`. Override with `WIKIMAKER_CONDA_ENV` only for debugging.
+
+Corpus families currently expected:
+- WhatsApp extracts
+- AI conversations from different chats/tools
+- financial documents from Markdown extraction
+
+Planned corpus families already have built-in prompt profiles: contacts, calendars, meeting notes, recording transcripts, emails, iMessages, personal notes, Google Docs, code repositories, project artifacts, index/ledger pages, and mixed notes.
 
 ## What the scaffold does
 - loads configuration
@@ -99,9 +126,9 @@ The helper pins the local Ollama endpoint to `http://192.168.86.11:11434`, uses 
 - writes deterministic source-summary stubs
 - stores updated state for the next run
 
-## What comes later
-- ADK graph wiring for full orchestration
-- LLM-based topic inference
-- full wiki synthesis
-- contradiction and evolution analysis
-- incremental page reorganization
+## Current wiki compiler behavior
+- classifies model endpoint privacy before LLM use
+- applies automatic corpus-kind detection plus optional local prompt-profile overrides
+- asks the local LLM for source-page plans, wiki-set synthesis, and verification
+- writes source summaries, wiki sets, topic/entity pages, backlinks, graph data, privacy status, health checks, browser data, telemetry, and state
+- preserves generated output separately from the source corpus

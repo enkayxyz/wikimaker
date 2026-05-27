@@ -10,6 +10,8 @@ from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field
 
+from wikimaker_privacy import classify_endpoint_privacy
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -116,10 +118,30 @@ def _coerce_source_page_plan(page: SourcePagePlan | dict[str, Any]) -> SourcePag
 
 def _canonical_corpus_kind(value: str) -> str:
     lowered = str(value or "").strip().lower().replace("/", "_").replace("-", "_")
-    if any(token in lowered for token in ("invoice", "bill", "receipt", "statement", "document")):
-        return "bills_documents"
+    if any(token in lowered for token in ("invoice", "bill", "receipt", "statement", "financial", "bank", "transaction")):
+        return "financial_documents"
+    if any(token in lowered for token in ("ai_conversation", "chatgpt", "claude", "gemini", "llm")):
+        return "ai_conversations"
     if any(token in lowered for token in ("whatsapp", "chat", "conversation", "thread", "message")):
-        return "chats"
+        return "whatsapp_chats"
+    if any(token in lowered for token in ("imessage", "sms")):
+        return "imessages"
+    if "email" in lowered:
+        return "emails"
+    if any(token in lowered for token in ("calendar", "event")):
+        return "calendars"
+    if any(token in lowered for token in ("meeting", "minutes")):
+        return "meeting_notes"
+    if any(token in lowered for token in ("recording", "transcript", "audio", "video")):
+        return "recording_transcripts"
+    if "contact" in lowered:
+        return "contacts"
+    if any(token in lowered for token in ("google_doc", "gdoc")):
+        return "google_docs"
+    if any(token in lowered for token in ("code", "repo", "repository")):
+        return "code_repositories"
+    if any(token in lowered for token in ("personal_note", "journal", "reflection", "daily_note")):
+        return "personal_notes"
     if any(token in lowered for token in ("project", "task", "issue", "roadmap", "spec", "milestone", "artifact")):
         return "project_artifacts"
     if any(token in lowered for token in ("index", "ledger", "journal", "log", "toc")):
@@ -131,11 +153,21 @@ def _canonical_corpus_kind(value: str) -> str:
 
 def _corpus_kind_guidance(corpus_kinds: list[str]) -> str:
     guidance_map = {
-        "chats": "Chats: capture participants, thread structure, decisions, unresolved questions, and recurring entities.",
-        "bills_documents": "Bills/documents: capture dates, amounts, vendors, document type, reference numbers, and any ambiguous totals.",
+        "whatsapp_chats": "WhatsApp chats: capture participants, contact handles, timestamps, reply/thread structure, shared media references, decisions, promises, unresolved questions, and recurring relationship context.",
+        "ai_conversations": "AI conversations: capture user goals, model/tool context, useful answers, reusable prompts, decisions, code or commands, open tasks, and suspected hallucinations or contradictions.",
+        "financial_documents": "Financial documents: capture dates, amounts, vendors/institutions, document type, reference numbers, due dates, tax/category hints, recurring charges, and ambiguous totals.",
+        "contacts": "Contacts: capture people, organizations, roles, contact methods, relationship context, locations, important dates, and freshness.",
+        "calendars": "Calendars: capture events, attendees, dates, recurrence, locations, conflicts, travel buffers, and follow-ups.",
+        "meeting_notes": "Meeting notes: capture attendees, agenda, decisions, action items, owners, deadlines, blockers, and related documents.",
+        "recording_transcripts": "Recording transcripts: capture speakers, timestamps, topics, decisions, action items, evidence quotes, transcription uncertainty, and source media links.",
+        "emails": "Emails: capture senders, recipients, dates, subject threads, commitments, attachments, decisions, and follow-ups.",
+        "imessages": "iMessages: capture participants, timestamps, conversation threads, attachments, decisions, promises, plans, and personal relationship context.",
         "mixed_notes": "Mixed notes: group by topic, keep the source page's note-taking role explicit, and avoid over-merging unrelated notes.",
+        "personal_notes": "Personal notes: capture intentions, decisions, questions, dated reflections, recurring themes, and private context while separating speculation from confirmed facts.",
         "project_artifacts": "Project artifacts: identify task names, milestones, solution paths, blockers, and deliverables.",
         "index_ledger_pages": "Index/ledger pages: summarize structure, navigation role, coverage, and update history.",
+        "google_docs": "Google Docs: capture document purpose, owner, collaborators, decisions, links, version/evolution signals, and claims needing source support.",
+        "code_repositories": "Code repositories: capture module purpose, entrypoints, APIs, dependencies, decisions, TODOs, tests, deployment notes, and issue/doc links.",
     }
     ordered: list[str] = []
     for kind in corpus_kinds:
@@ -147,6 +179,31 @@ def _corpus_kind_guidance(corpus_kinds: list[str]) -> str:
     lines = ["Corpus-kind instructions:"]
     for kind in ordered:
         lines.append(f"- {guidance_map.get(kind, f'{kind}: preserve provenance and separate it from unrelated families.')}")
+    return "\n".join(lines)
+
+
+def _profile_guidance(scan_prompt: dict[str, Any]) -> str:
+    profiles = scan_prompt.get("prompt_profiles", {})
+    loaded_from = str((profiles or {}).get("source_path") or "").strip()
+    lines = ["Prompt-profile instructions:"]
+    if loaded_from:
+        lines.append(f"- Apply local prompt profile overrides from `{loaded_from}` when present.")
+    else:
+        lines.append("- No local profile file was found; use the built-in corpus-kind profiles.")
+    seen: dict[str, dict[str, Any]] = {}
+    for item in scan_prompt.get("sample_files", []):
+        if not isinstance(item, dict):
+            continue
+        profile = item.get("prompt_profile") or {}
+        if isinstance(profile, dict) and profile.get("name"):
+            seen[str(profile["name"])] = profile
+    for name, profile in sorted(seen.items()):
+        fields = ", ".join(str(field) for field in (profile.get("extraction_fields") or [])[:8])
+        guidance = str(profile.get("guidance") or "").strip()
+        if guidance:
+            lines.append(f"- {name}: {guidance}")
+        if fields:
+            lines.append(f"  Required emphasis: {fields}")
     return "\n".join(lines)
 
 
@@ -179,6 +236,7 @@ def _compact_scan_for_prompt(scan: dict[str, Any], diff: dict[str, list[str]], *
                 "line_count": record.get("line_count"),
                 "source_kind": source_kind,
                 "corpus_kind": corpus_kind,
+                "prompt_profile": record.get("prompt_profile", {}),
             }
         )
 
@@ -190,6 +248,7 @@ def _compact_scan_for_prompt(scan: dict[str, Any], diff: dict[str, list[str]], *
         "file_count": len(files),
         "sample_limit": limit,
         "corpus_kinds": [item for item in dict.fromkeys([str(kind).strip() for kind in (scan.get("corpus_kinds") or seen_kinds) if str(kind).strip()])],
+        "prompt_profiles": scan.get("prompt_profiles", {}),
         "sample_files": compact_files,
         "diff": {
             "added": _trim_list(diff.get("added", [])),
@@ -213,11 +272,12 @@ def _require_local_llm_config(config: dict[str, Any]) -> tuple[str, str, str]:
         raise RuntimeError(f"Unsupported provider '{provider}'. Use ollama or openai-compatible.")
     if not base_url:
         raise RuntimeError("Missing OPENAI_BASE_URL. Set it in /Users/enkay/dev/wikimaker/.env.")
-    parsed = urlparse(base_url)
-    host = (parsed.hostname or "").strip()
-    if not host.startswith("192.168.86."):
+    privacy = classify_endpoint_privacy(base_url)
+    allow_remote = _boolish(config.get("allow_remote_llm"))
+    if not privacy.get("allowed_by_default") and not allow_remote:
         raise RuntimeError(
-            f"Refusing non-local LLM endpoint '{base_url}'. WikiMaker real-corpus runs are restricted to the 192.168.86.* Ollama server."
+            f"Refusing non-local LLM endpoint '{base_url}'. Classification: {privacy.get('classification')} / {privacy.get('risk')}. "
+            "Set WIKIMAKER_ALLOW_REMOTE_LLM=1 or pass --allow-remote-llm only if this leak boundary is intentional."
         )
     if provider != "ollama" and not api_key:
         raise RuntimeError("Missing OPENAI_API_KEY or OSAURUS_API_KEY in /Users/enkay/dev/wikimaker/.env.")
@@ -302,6 +362,7 @@ def _analysis_prompt(scan_prompt: dict[str, Any]) -> str:
         "Preserve provenance and keep the output compact.\n\n"
         f"Detected corpus kinds: {', '.join(corpus_kinds) if corpus_kinds else 'mixed_notes'}\n\n"
         f"{_corpus_kind_guidance(corpus_kinds)}\n\n"
+        f"{_profile_guidance(scan_prompt)}\n\n"
         f"SCAN_JSON:\n{json.dumps(scan_prompt, indent=2, sort_keys=True)}"
     )
 
@@ -312,9 +373,10 @@ def _generation_prompt(scan_prompt: dict[str, Any], analysis: AnalysisPlan) -> s
         "Stage 2: identify commonality across the source pages and update the source-page plans with new insights. Return strict JSON only. "
         "Cluster related source pages into wiki sets, separate distinct corpora when needed, identify duplicates, contradictions, and evolving topics, propose wiki-set page names, draft concise root-index, dashboard, and stats summaries, and fill each source page's used-in links when relevant. "
         "Preserve backlinks, page roles, and evidence, and keep page_role assignments stable unless a page clearly changes role. "
-        "Keep chats, bills/documents, mixed notes, project artifacts, and index/ledger pages separated when they would otherwise blur together.\n\n"
+        "Keep WhatsApp chats, AI conversations, financial documents, contacts, calendars, meeting notes, recordings/transcripts, emails, iMessages, personal notes, Google Docs, code, project artifacts, and index/ledger pages separated when they would otherwise blur together.\n\n"
         f"Detected corpus kinds: {', '.join(corpus_kinds) if corpus_kinds else 'mixed_notes'}\n\n"
         f"{_corpus_kind_guidance(corpus_kinds)}\n\n"
+        f"{_profile_guidance(scan_prompt)}\n\n"
         f"SCAN_JSON:\n{json.dumps(scan_prompt, indent=2, sort_keys=True)}\n\n"
         f"ANALYSIS_JSON:\n{json.dumps(analysis.model_dump(), indent=2, sort_keys=True)}"
     )
@@ -328,6 +390,7 @@ def _verification_prompt(scan_prompt: dict[str, Any], analysis: AnalysisPlan, ge
         "Flag unsupported claims, missing backlinks, missed files, or risky reorganization suggestions.\n\n"
         f"Detected corpus kinds: {', '.join(corpus_kinds) if corpus_kinds else 'mixed_notes'}\n\n"
         f"{_corpus_kind_guidance(corpus_kinds)}\n\n"
+        f"{_profile_guidance(scan_prompt)}\n\n"
         f"SCAN_JSON:\n{json.dumps(scan_prompt, indent=2, sort_keys=True)}\n\n"
         f"ANALYSIS_JSON:\n{json.dumps(analysis.model_dump(), indent=2, sort_keys=True)}\n\n"
         f"GENERATION_JSON:\n{json.dumps(generation.model_dump(), indent=2, sort_keys=True)}"

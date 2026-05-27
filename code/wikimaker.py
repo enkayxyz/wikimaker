@@ -27,6 +27,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sample-files", type=int, help="Maximum number of files to include in the model prompt sample window")
     parser.add_argument("--progress-every", type=int, help="Print a scan progress line every N files")
     parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=None, help="Run without future write actions")
+    parser.add_argument("--allow-remote-llm", action=argparse.BooleanOptionalAction, default=None, help="Allow remote model endpoints after privacy classification")
+    parser.add_argument("--prompt-profile", help="Optional wikimaker prompt profile JSON/YAML path")
     return parser.parse_args(argv)
 
 
@@ -50,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
             sample_files=args.sample_files,
             progress_every=args.progress_every,
             dry_run=args.dry_run,
+            allow_remote_llm=args.allow_remote_llm,
+            prompt_profile_path=args.prompt_profile,
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -84,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"- search: {result['paths'].get('search', '')}")
     print(f"- graph: {result['paths'].get('graph', '')}")
     print(f"- browser: {result['paths'].get('browser', '')}")
+    print(f"- privacy: {result['paths'].get('privacy', '')}")
+    print(f"- health: {result['paths'].get('health', '')}")
     print(f"- telemetry: {result['paths']['telemetry']}")
     return 0
 

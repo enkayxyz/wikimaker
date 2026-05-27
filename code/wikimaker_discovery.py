@@ -227,6 +227,22 @@ def build_discovery_views(scan: dict[str, Any], diff: dict[str, list[str]], pipe
             if page_id:
                 add_edge(set_id, page_id, "contains")
 
+    comparable_pages = [page for page in source_pages if page.get("path")][:500]
+    for index, left in enumerate(comparable_pages):
+        left_id = f"source:{left.get('path')}"
+        left_topics = {item.lower() for item in _clean_list(left.get("topics"))}
+        left_entities = {item.lower() for item in _clean_list(left.get("entities"))}
+        for right in comparable_pages[index + 1:]:
+            right_id = f"source:{right.get('path')}"
+            topic_overlap = left_topics.intersection({item.lower() for item in _clean_list(right.get("topics"))})
+            entity_overlap = left_entities.intersection({item.lower() for item in _clean_list(right.get("entities"))})
+            if entity_overlap:
+                add_edge(left_id, right_id, "shared_entity")
+                add_edge(right_id, left_id, "shared_entity")
+            elif topic_overlap:
+                add_edge(left_id, right_id, "shared_topic")
+                add_edge(right_id, left_id, "shared_topic")
+
     node_rows: list[dict[str, Any]] = []
     mtime_values = [int(record.get("mtime_ns", 0) or 0) for record in files.values() if isinstance(record, dict) and record.get("mtime_ns") is not None]
     min_mtime = min(mtime_values) if mtime_values else 0
@@ -362,6 +378,8 @@ def write_discovery_views(config: WikiMakerConfig, scan: dict[str, Any], diff: d
         "- [_Search index](_search.md)",
         "- [_Browser UI](browser/index.html)",
         "- [_Graph data](_graph.json)",
+        "- [_Privacy boundary](_privacy.md)",
+        "- [_Health check](_health.md)",
 
 
         "## Corpus kinds",

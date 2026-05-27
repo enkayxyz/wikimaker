@@ -6,13 +6,37 @@ import hashlib
 import json
 from typing import Any
 
-from opentelemetry import trace
+try:  # pragma: no cover - optional dependency in minimal envs
+    from opentelemetry import trace
+except Exception:  # pragma: no cover
+    class _NoopSpan:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def set_attribute(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+    class _NoopTracer:
+        def start_as_current_span(self, _name: str) -> _NoopSpan:
+            return _NoopSpan()
+
+    class _NoopTrace:
+        def get_tracer(self, _name: str) -> _NoopTracer:
+            return _NoopTracer()
+
+    trace = _NoopTrace()  # type: ignore[assignment]
 
 from wikimaker_openai import GenerationPlan, AnalysisPlan, VerificationPlan, run_pipeline
 from wikimaker_config import WikiMakerConfig
 from wikimaker_discovery import write_discovery_views, _source_stub_name, _wiki_set_dir_name
 from wikimaker_browser import write_browser_frontend
+from wikimaker_health import build_wiki_health, write_health_report
 from wikimaker_observability import configure_adk_tracing, run_adk_self_eval
+from wikimaker_privacy import browser_network_posture, classify_endpoint_privacy
+from wikimaker_profiles import apply_prompt_profiles
 from wikimaker_scanner import scan_corpus
 from wikimaker_state import diff_snapshots, load_snapshot, save_snapshot
 from wikimaker_telemetry import build_telemetry, write_telemetry
@@ -54,6 +78,7 @@ def write_change_report(
         "## LLM pipeline",
         f"- LLM used: `{pipeline.get('llm_used')}`",
         f"- Pipeline errors: `{pipeline.get('errors', [])}`",
+        f"- Endpoint privacy: `{pipeline.get('privacy', {}).get('classification', 'unknown')}` / `{pipeline.get('privacy', {}).get('risk', 'unknown')}`",
         "",
         "## Analysis",
         "```json",
@@ -80,10 +105,43 @@ def write_change_report(
     return path
 
 
+def _relationship_maps(source_pages: list[dict[str, Any]]) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    lookup: dict[str, str] = {}
+    title_by_path: dict[str, str] = {}
+    for page in source_pages:
+        rel_path = str(page.get("path") or "").strip()
+        title = str(page.get("title") or Path(rel_path).stem or rel_path).strip()
+        if rel_path:
+            title_by_path[rel_path] = title
+        for candidate in (rel_path, title, Path(rel_path).stem):
+            key = "".join(ch for ch in str(candidate).lower() if ch.isalnum())
+            if key and rel_path:
+                lookup.setdefault(key, rel_path)
+    links_to: dict[str, list[str]] = {str(page.get("path")): [] for page in source_pages if page.get("path")}
+    linked_from: dict[str, list[str]] = {str(page.get("path")): [] for page in source_pages if page.get("path")}
+    for page in source_pages:
+        rel_path = str(page.get("path") or "").strip()
+        source_title = title_by_path.get(rel_path, rel_path)
+        if not rel_path:
+            continue
+        for item in page.get("related_pages", []) or []:
+            key = "".join(ch for ch in str(item).lower() if ch.isalnum())
+            target_path = lookup.get(key)
+            if not target_path or target_path == rel_path:
+                continue
+            target_title = title_by_path.get(target_path, target_path)
+            if target_title not in links_to[rel_path]:
+                links_to[rel_path].append(target_title)
+            if source_title not in linked_from[target_path]:
+                linked_from[target_path].append(source_title)
+    return links_to, linked_from
+
+
 def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[str, list[str]], generation: dict[str, Any]) -> list[Path]:
     written: list[Path] = []
     generation_pages = generation.get("source_pages", [])
     generation_by_path = {page.get("path"): page for page in generation_pages if isinstance(page, dict)}
+    links_to, linked_from = _relationship_maps([page for page in generation_pages if isinstance(page, dict)])
 
     for rel_path, record in sorted(scan.get("files", {}).items()):
         if record.get("error"):
@@ -179,6 +237,24 @@ def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict
             content.append("- _None found_")
         content.extend([
             "",
+            "## Links to",
+        ])
+        links_to_items = links_to.get(rel_path, [])
+        if links_to_items:
+            content.extend(f"- {item}" for item in links_to_items)
+        else:
+            content.append("- _None found_")
+        content.extend([
+            "",
+            "## Linked from",
+        ])
+        linked_from_items = linked_from.get(rel_path, [])
+        if linked_from_items:
+            content.extend(f"- {item}" for item in linked_from_items)
+        else:
+            content.append("- _None found_")
+        content.extend([
+            "",
             "## Related pages",
         ])
         related_pages = page.get("related_pages") or []
@@ -199,6 +275,153 @@ def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict
         out_path.write_text("\n".join(content) + "\n", encoding="utf-8")
         written.append(out_path)
     return written
+
+
+def _safe_page_name(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in value.strip().lower())
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    return cleaned or "page"
+
+
+def _matching_sources(source_pages: list[dict[str, Any]], label: str, field: str) -> list[dict[str, Any]]:
+    normalized = label.strip().lower()
+    matches = []
+    for page in source_pages:
+        values = [str(item).strip().lower() for item in page.get(field, []) or []]
+        if normalized in values:
+            matches.append(page)
+    return matches
+
+
+def write_knowledge_pages(config: WikiMakerConfig, pipeline: dict[str, Any], scan: dict[str, Any]) -> list[Path]:
+    analysis = pipeline.get("analysis", {})
+    generation = pipeline.get("generation", {})
+    source_pages = [page for page in generation.get("source_pages", []) if isinstance(page, dict)]
+    written: list[Path] = []
+
+    def write_page(kind: str, label: str, matches: list[dict[str, Any]], extra_lines: list[str] | None = None) -> None:
+        plural = {
+            "entity": "entities",
+            "topic": "topics",
+            "duplicate": "duplicates",
+            "contradiction": "contradictions",
+        }.get(kind, f"{kind}s")
+        out_dir = config.output_root / "wiki-sets" / f"_{plural}"
+        out_path = out_dir / f"{_safe_page_name(label)}.md"
+        lines = [
+            f"# {label}",
+            "",
+            f"Purpose: synthesized {kind} page generated from source-summary metadata.",
+            "",
+            "## Synthesis",
+        ]
+        if matches:
+            for page in matches[:12]:
+                lines.append(f"- {page.get('summary') or page.get('title') or page.get('path')}")
+        else:
+            lines.append("- This page was detected as a corpus-level cluster but has sparse source-page metadata.")
+        lines.extend([
+            "",
+            "## Sources",
+        ])
+        if matches:
+            for page in matches[:30]:
+                rel_path = str(page.get("path") or "")
+                stub = _source_stub_name(rel_path) if rel_path else ""
+                source_link = f"../../sources/{stub}" if stub else ""
+                lines.append(f"- `{rel_path}`" + (f" — [source summary]({source_link})" if source_link else ""))
+        else:
+            lines.append("- _No direct sources matched by metadata._")
+        lines.extend([
+            "",
+            "## Evidence / Truth trail",
+        ])
+        evidence = [snippet for page in matches for snippet in (page.get("key_snippets") or [])]
+        if evidence:
+            lines.extend(f"- {item}" for item in evidence[:20])
+        else:
+            lines.append("- _No evidence snippets were provided by the model._")
+        lines.extend([
+            "",
+            "## Related pages",
+        ])
+        related = []
+        for page in matches:
+            related.extend(str(item) for item in page.get("related_pages", []) or [])
+        if related:
+            lines.extend(f"- {item}" for item in sorted(dict.fromkeys(related))[:20])
+        else:
+            lines.append("- _None found_")
+        lines.extend([
+            "",
+            "## Duplicates / Near-duplicates",
+        ])
+        duplicates = analysis.get("duplicate_clusters") or []
+        if duplicates:
+            lines.extend(f"- {item}" for item in duplicates)
+        else:
+            lines.append("- _None found_")
+        lines.extend([
+            "",
+            "## Evolution over time",
+            "- Review source dates and folder ledgers for temporal changes.",
+            "",
+            "## Contradictions / Tensions",
+        ])
+        contradictions = analysis.get("contradiction_clusters") or []
+        if contradictions:
+            lines.extend(f"- {item}" for item in contradictions)
+        else:
+            lines.append("- _None found_")
+        if extra_lines:
+            lines.extend(["", *extra_lines])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        written.append(out_path)
+
+    for topic in analysis.get("topic_clusters", []) or []:
+        write_page("topic", str(topic), _matching_sources(source_pages, str(topic), "topics"))
+    for entity in analysis.get("entity_clusters", []) or []:
+        write_page("entity", str(entity), _matching_sources(source_pages, str(entity), "entities"))
+
+    for cluster_kind, values in (("duplicate", analysis.get("duplicate_clusters") or []), ("contradiction", analysis.get("contradiction_clusters") or [])):
+        for value in values:
+            write_page(cluster_kind, str(value), source_pages, [f"## Cluster type", f"- {cluster_kind}"])
+    return written
+
+
+def write_privacy_report(config: WikiMakerConfig, scan: dict[str, Any], pipeline: dict[str, Any]) -> Path:
+    privacy = pipeline.get("privacy") or classify_endpoint_privacy(config.openai_base_url)
+    external_links = sum(len(record.get("source_links") or []) for record in scan.get("files", {}).values() if isinstance(record, dict))
+    browser = browser_network_posture(has_active_fetches=False, external_links=external_links)
+    lines = [
+        "# WikiMaker Privacy and Model Boundary",
+        "",
+        "## Model endpoint",
+        f"- Base URL: `{privacy.get('base_url', '')}`",
+        f"- Host: `{privacy.get('host', '')}`",
+        f"- Classification: `{privacy.get('classification', 'unknown')}`",
+        f"- Network scope: `{privacy.get('network_scope', 'unknown')}`",
+        f"- Risk: `{privacy.get('risk', 'unknown')}`",
+        f"- Allowed by default: `{privacy.get('allowed_by_default')}`",
+        f"- Reason: {privacy.get('reason', '')}",
+        f"- Remote override enabled: `{config.allow_remote_llm}`",
+        "",
+        "## Browser network posture",
+        f"- Classification: `{browser['classification']}`",
+        f"- Active outbound fetches: `{browser['active_outbound_fetches']}`",
+        f"- Passive external reference links: {browser['external_reference_links']}",
+        f"- Reason: {browser['reason']}",
+        "",
+        "## Prompt profiles",
+        f"- Profile source: `{scan.get('prompt_profiles', {}).get('source_path', '') or 'built-in defaults'}`",
+        f"- Loaded local profile file: `{scan.get('prompt_profiles', {}).get('loaded')}`",
+        "",
+        "No remote fonts, image lookups, analytics, or hidden browser fetches are generated by WikiMaker.",
+    ]
+    path = config.output_root / "_privacy.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
 
 
 def write_root_index(config: WikiMakerConfig, pipeline: dict[str, Any]) -> Path:
@@ -233,6 +456,8 @@ def write_root_index(config: WikiMakerConfig, pipeline: dict[str, Any]) -> Path:
         "- [_Search index](_search.md)",
         "- [_Browser UI](browser/index.html)",
         "- [_Graph data](_graph.json)",
+        "- [_Privacy boundary](_privacy.md)",
+        "- [_Health check](_health.md)",
         "",
         "## Corpus kinds",
     ]
@@ -459,6 +684,8 @@ def _write_dry_run_preview(config: WikiMakerConfig, scan: dict[str, Any], diff: 
         f"- Unchanged: {len(diff['unchanged'])}",
         f"- LLM used: `{pipeline.get('llm_used')}`",
         f"- Pipeline errors: `{pipeline.get('errors', [])}`",
+        f"- Endpoint privacy: `{pipeline.get('privacy', {}).get('classification', 'unknown')}` / `{pipeline.get('privacy', {}).get('risk', 'unknown')}`",
+        f"- Prompt profile source: `{scan.get('prompt_profiles', {}).get('source_path', '') or 'built-in defaults'}`",
         "",
         "## File-by-file preview",
         "| Status | Path | Title | Headings | Links |",
@@ -501,11 +728,13 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
     ensure_workspace(config)
     tracing_state = configure_adk_tracing(config.as_dict())
     tracer = trace.get_tracer("wikimaker")
+    endpoint_privacy = classify_endpoint_privacy(config.openai_base_url)
 
     with tracer.start_as_current_span("wikimaker.run") as root_span:
         root_span.set_attribute("wikimaker.corpus_root", str(config.corpus_root))
         root_span.set_attribute("wikimaker.output_root", str(config.output_root))
         root_span.set_attribute("wikimaker.provider", config.provider)
+        root_span.set_attribute("wikimaker.endpoint_privacy", str(endpoint_privacy.get("classification", "unknown")))
         root_span.set_attribute("wikimaker.use_adk", bool(config.use_adk))
         root_span.set_attribute("wikimaker.enable_adk_eval", bool(config.enable_adk_eval))
         root_span.set_attribute("wikimaker.dry_run", bool(config.dry_run))
@@ -513,11 +742,13 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
         with tracer.start_as_current_span("wikimaker.scan"):
             previous = load_snapshot(config.state_root)
             scan = scan_corpus(config.corpus_root, progress_every=int(config.as_dict().get("progress_every", 0) or 0))
+            scan = apply_prompt_profiles(scan, corpus_root=config.corpus_root, profile_path=config.prompt_profile_path or None)
             current = {"generated_at": datetime.now(timezone.utc).isoformat(), "files": scan.get("files", {})}
             diff = diff_snapshots(previous, current)
 
         with tracer.start_as_current_span("wikimaker.pipeline"):
             pipeline = run_pipeline(scan, diff, config.as_dict())
+            pipeline["privacy"] = endpoint_privacy
 
         with tracer.start_as_current_span("wikimaker.telemetry"):
             telemetry = build_telemetry(config.telemetry_dict(), diff, scan)
@@ -528,6 +759,8 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 "generation_confidence": pipeline.get("generation", {}).get("confidence"),
                 "verification_confidence": pipeline.get("verification", {}).get("confidence"),
             }
+            telemetry["privacy"] = endpoint_privacy
+            telemetry["prompt_profiles"] = scan.get("prompt_profiles", {})
             telemetry["observability"] = {
                 "tracing": tracing_state,
             }
@@ -543,16 +776,24 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
             wiki_set_paths: list[Path] = []
             folder_doc_paths: list[Path] = []
             discovery_paths: dict[str, Path] = {}
+            knowledge_page_paths: list[Path] = []
+            privacy_path = None
+            health_path = None
         else:
             with tracer.start_as_current_span("wikimaker.publish"):
                 report_path = write_change_report(config, scan, diff, pipeline)
                 root_index_path = write_root_index(config, pipeline)
                 source_stub_paths = write_source_stubs(config, scan, diff, pipeline.get("generation", {}))
                 wiki_set_paths = write_wiki_set_pages(config, pipeline, scan)
+                knowledge_page_paths = write_knowledge_pages(config, pipeline, scan)
                 folder_doc_paths = write_folder_docs(config, scan, diff, pipeline)
                 discovery_paths = write_discovery_views(config, scan, diff, pipeline)
                 browser_path = write_browser_frontend(config, scan, diff, pipeline)
                 discovery_paths["browser"] = browser_path
+                privacy_path = write_privacy_report(config, scan, pipeline)
+                graph_data = json.loads(discovery_paths["graph"].read_text(encoding="utf-8")) if discovery_paths.get("graph") else {}
+                health = build_wiki_health(scan, pipeline, graph_data)
+                health_path = write_health_report(config.output_root, health)
                 snapshot_path = save_snapshot(config.state_root, current)
 
         if config.enable_adk_eval:
@@ -588,11 +829,14 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 "source_stubs": [str(p) for p in source_stub_paths],
                 "wiki_set_pages": [str(p) for p in wiki_set_paths],
                 "folder_docs": [str(p) for p in folder_doc_paths],
+                "knowledge_pages": [str(p) for p in knowledge_page_paths],
                 "dashboard": str(discovery_paths.get("dashboard", "")) if discovery_paths else "",
                 "stats": str(discovery_paths.get("stats", "")) if discovery_paths else "",
                 "search": str(discovery_paths.get("search", "")) if discovery_paths else "",
                 "graph": str(discovery_paths.get("graph", "")) if discovery_paths else "",
                 "browser": str(discovery_paths.get("browser", "")) if discovery_paths else "",
+                "privacy": str(privacy_path) if privacy_path else "",
+                "health": str(health_path) if health_path else "",
                 "adk_trace_db": config.adk_trace_db,
                 "adk_eval_dir": config.adk_eval_dir,
             },
@@ -603,6 +847,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
             "llm": {
                 "used": pipeline.get("llm_used"),
                 "errors": pipeline.get("errors", []),
+                "privacy": endpoint_privacy,
             },
             "analysis": pipeline.get("analysis", {}),
             "generation": pipeline.get("generation", {}),

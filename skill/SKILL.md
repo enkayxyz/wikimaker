@@ -11,7 +11,7 @@ metadata:
 
 # WikiMaker
 
-Use this skill when the user provides a folder tree containing Markdown files. The tree may contain many nested subfolders. The corpus may include multiple source domains, such as bills and WhatsApp exports, and the wiki should usually split them into separate wiki sets while still cross-linking shared entities. Every source file is Markdown and should include a link back to its original source document. Your job is to infer one wiki or multiple wiki sets, generate the wiki in Markdown, maintain links/backlinks, and keep folder-level `gist.md` and `ledger.md` files updated over time. Keep the pipeline local-first and compatible with an OpenAI-style local server (Osaurus or similar) rather than assuming any external LLM.
+Use this skill when the user provides a folder tree containing Markdown files. The tree may contain many nested subfolders. The corpus may include multiple source domains, such as bills and WhatsApp exports, and the wiki should usually split them into separate wiki sets while still cross-linking shared entities. Every source file is Markdown and should include a link back to its original source document. Your job is to infer one wiki or multiple wiki sets, generate the wiki in Markdown, maintain links/backlinks, and keep folder-level `gist.md` and `ledger.md` files updated over time. Keep the pipeline local-first and compatible with an OpenAI-style local server (Ollama, Osaurus, or similar) rather than assuming any external LLM.
 
 This is a compiler and curator workflow, not an extraction workflow.
 
@@ -30,6 +30,8 @@ Output:
 - Cross-linked pages, indexes, and relationship hubs.
 - Per-folder `gist.md` and `ledger.md` files.
 - Incremental updates and reorganization suggestions as content changes.
+- A static browser UI inspired by WikiOS, without merging the WikiOS stack.
+- Privacy and health reports for each generated wiki.
 
 ## Non-negotiable rules
 
@@ -44,6 +46,8 @@ Output:
 7. Prefer read-only generated output so edits require deliberate effort outside the normal browsing flow.
 8. Prefer incremental updates over full rebuilds when possible.
 9. Default to local-only inference paths; if a remote or external model is ever used, make that explicit in config and documentation.
+10. Classify the model endpoint as local, LAN, or remote before sending corpus content to it.
+11. Do not generate browser assets that silently fetch remote fonts, images, analytics, or metadata.
 
 ## Day-zero model separation
 
@@ -104,6 +108,9 @@ Recommended env vars:
 - `WIKIMAKER_GENERATION_MODEL`
 - `WIKIMAKER_REVIEW_MODEL`
 - `WIKIMAKER_USE_ADK`
+- `WIKIMAKER_ALLOW_REMOTE_LLM`
+- `WIKIMAKER_PROMPT_PROFILE`
+- `WIKIMAKER_CONDA_ENV`
 - `OPENAI_API_KEY`
 - `OSAURUS_API_KEY`
 - `OPENAI_BASE_URL`
@@ -111,6 +118,57 @@ Recommended env vars:
 Local model defaults that worked best in this flow:
 - your Ollama model name for routine extraction/summarization
 - your Ollama model name for heavier synthesis/review
+
+## Runtime environment
+
+Use the dedicated `wikimaker` conda environment, not the extraction utility environment:
+
+```bash
+cd /Users/enkay/dev/wikimaker
+conda env create -f environment.yml
+conda run -n wikimaker python -m pip install -r requirements.txt
+conda run -n wikimaker python wikimaker.py --help
+```
+
+The macOS helper defaults to `WIKIMAKER_CONDA_ENV=wikimaker`. Override that only for debugging.
+
+If network access is unavailable during setup, it is acceptable to clone an existing local Python 3.11 env as a temporary bootstrap, then run the `pip install -r requirements.txt` command when package access returns.
+
+## Privacy boundary
+
+Every run should make the model boundary visible:
+- `local` means this machine
+- `lan` means private-network endpoint
+- `remote` means DNS/public internet risk
+
+Remote endpoints must be refused unless `WIKIMAKER_ALLOW_REMOTE_LLM=1` or `--allow-remote-llm` is set. The generated output should include `_privacy.md`, and the browser UI should expose the model endpoint classification and browser network posture.
+
+The generated browser should stay static-first: embedded/local JSON, local links, no remote fonts, no image lookup, no analytics, no hidden fetches.
+
+## Prompt profiles
+
+Use automatic corpus-kind detection plus optional local overrides. WikiMaker should look for `wikimaker.profiles.json`, `wikimaker.profiles.yaml`, or `wikimaker.profiles.yml` under the corpus root, or use `WIKIMAKER_PROMPT_PROFILE`.
+
+Profiles should be local files and can override folder behavior:
+
+```json
+{
+  "profiles": {
+    "family_archive": {
+      "corpus_kind": "whatsapp_chats",
+      "guidance": "Emphasize people, dates, decisions, relationships, and unresolved follow-ups.",
+      "extraction_fields": ["people", "dates", "decisions", "relationships"]
+    }
+  },
+  "folder_rules": [
+    {"path": "whatsapp", "profile": "family_archive", "corpus_kind": "whatsapp_chats"},
+    {"path": "ai-conversations", "profile": "ai_conversations", "corpus_kind": "ai_conversations"},
+    {"path": "financial", "profile": "financial_documents", "corpus_kind": "financial_documents"}
+  ]
+}
+```
+
+Built-in profiles should cover the current corpus families (`whatsapp_chats`, `ai_conversations`, and `financial_documents`) plus contacts, calendars, meeting notes, recording transcripts, emails, iMessages, personal notes, Google Docs, code repositories, project artifacts, index/ledger pages, and mixed notes. Legacy `chats` and `bills_documents` are still accepted as aliases.
 
 
 ## Expected workspace layout
@@ -127,6 +185,8 @@ project/
     output/
       _root_index.md
       _change_report.md
+      _privacy.md
+      _health.md
       raw-links/             # optional indexes into the raw corpus
       sources/               # one compact source-summary page per source document/chat
       wiki-sets/
@@ -237,6 +297,8 @@ Generate:
 - concept/entity/topic pages
 - relationship hubs when useful
 - backlinks / related pages sections
+- privacy report (`_privacy.md`)
+- health report (`_health.md`)
 
 Every source-summary page should include:
 - title
@@ -323,6 +385,8 @@ Run health checks when asked or after major updates. Look for:
 - underlinked folders
 - folders whose `gist.md` is stale relative to file changes
 
+Write health results to `_health.md` and surface the health link in the generated browser.
+
 ## Implementation guidance
 
 When implementing this in a repo, start simple:
@@ -340,11 +404,10 @@ The user can point you at a corpus folder, choose models, preview the inferred w
 
 See:
 - `README.md`
-- `templates/config.yaml`
-- `templates/gist.md`
-- `templates/ledger.md`
-- `references/requirements.md`
-- `references/folder-contract.md`
-- `references/runbook.md`
-- `scripts/generate_alpha_v0001.py`
-- `scripts/wikimaker_alpha_v0001.py
+- `docs/requirements.md`
+- `docs/runbook.md`
+- `docs/wiki-os-borrowing-plan.md`
+- `wikimaker.py`
+- `wikimakerctl.sh`
+- `environment.yml`
+- `skill/wikimaker_alpha_v0001.py`

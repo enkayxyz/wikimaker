@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import sys
 
@@ -17,7 +18,10 @@ from wikimaker_config import WikiMakerConfig
 from wikimaker_discovery import build_discovery_views, write_discovery_views, _source_stub_name
 from wikimaker_browser import write_browser_frontend
 from wikimaker_openai import SourcePagePlan, AnalysisPlan, GenerationPlan, _require_local_llm_config, _analysis_prompt, _generation_prompt, _compact_scan_for_prompt, _verification_prompt
-from wikimaker_runner import write_source_stubs, write_root_index
+from wikimaker_privacy import classify_endpoint_privacy
+from wikimaker_profiles import apply_prompt_profiles
+from wikimaker_health import build_wiki_health, write_health_report
+from wikimaker_runner import run, write_source_stubs, write_root_index, write_knowledge_pages, write_privacy_report
 from wikimaker_scanner import scan_corpus
 from wikimaker_state import diff_snapshots
 from wikimaker_telemetry import build_telemetry
@@ -34,6 +38,22 @@ class WikiMakerSmokeTests(unittest.TestCase):
     def test_local_llm_config_rejects_non_local_endpoints(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Refusing non-local LLM endpoint"):
             _require_local_llm_config({"provider": "ollama", "openai_base_url": "http://example.com:11434"})
+
+    def test_endpoint_privacy_classification_and_remote_opt_in(self) -> None:
+        self.assertEqual(classify_endpoint_privacy("http://127.0.0.1:11434")["classification"], "local")
+        self.assertEqual(classify_endpoint_privacy("http://192.168.86.11:11434")["classification"], "lan")
+        remote = classify_endpoint_privacy("https://api.example.com/v1")
+        self.assertEqual(remote["classification"], "remote")
+        self.assertFalse(remote["allowed_by_default"])
+        provider, base_url, _ = _require_local_llm_config(
+            {
+                "provider": "ollama",
+                "openai_base_url": "https://api.example.com/v1",
+                "allow_remote_llm": True,
+            }
+        )
+        self.assertEqual(provider, "ollama")
+        self.assertEqual(base_url, "https://api.example.com/v1")
 
     def test_scanner_extracts_title_headings_and_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -65,11 +85,17 @@ See [Reference](https://example.com/ref).
             corpus_root = Path(tmp) / "corpus"
             corpus_root.mkdir(parents=True, exist_ok=True)
             files = {
-                "chat.md": """# Team chat
+                "whatsapp/chat.md": """# WhatsApp Team chat
 
 Conversation notes from Alice and Bob.
 Alice: can we ship this today?
 Bob: yes, after lunch.
+""",
+                "ai/claude.md": """# Claude conversation
+
+User: help me refactor the wiki generator.
+Assistant: use a source-first compiler and keep provenance.
+Tool call: inspect repository.
 """,
                 "invoice.md": """# Invoice 42
 
@@ -90,36 +116,80 @@ Table of contents for this ledger page.
 
 A loose set of mixed notes and ideas.
 """,
+                "journal.md": """# Personal note
+
+Journal entry and reflection about priorities.
+""",
             }
             for rel_path, content in files.items():
                 path = corpus_root / rel_path
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content, encoding="utf-8")
 
             scan = scan_corpus(corpus_root)
+            scan = apply_prompt_profiles(scan, corpus_root=corpus_root)
             kinds = {record.get("corpus_kind") for record in scan["files"].values() if isinstance(record, dict)}
-            self.assertIn("chats", kinds)
-            self.assertIn("bills_documents", kinds)
+            self.assertIn("whatsapp_chats", kinds)
+            self.assertIn("ai_conversations", kinds)
+            self.assertIn("financial_documents", kinds)
             self.assertIn("project_artifacts", kinds)
             self.assertIn("index_ledger_pages", kinds)
             self.assertIn("mixed_notes", kinds)
+            self.assertIn("personal_notes", kinds)
 
             compact = _compact_scan_for_prompt(scan, {"added": [], "changed": [], "removed": [], "unchanged": []})
-            self.assertGreaterEqual(len(compact["corpus_kinds"]), 5)
+            self.assertGreaterEqual(len(compact["corpus_kinds"]), 7)
             analysis_prompt = _analysis_prompt(compact)
             self.assertIn("Detected corpus kinds:", analysis_prompt)
-            self.assertIn("Chats:", analysis_prompt)
-            self.assertIn("Bills/documents:", analysis_prompt)
+            self.assertIn("WhatsApp chats:", analysis_prompt)
+            self.assertIn("AI conversations:", analysis_prompt)
+            self.assertIn("Financial documents:", analysis_prompt)
             self.assertIn("Project artifacts:", analysis_prompt)
             self.assertIn("Index/ledger pages:", analysis_prompt)
             self.assertIn("Mixed notes:", analysis_prompt)
+            self.assertIn("Personal notes:", analysis_prompt)
 
             analysis = AnalysisPlan(corpus_kinds=compact["corpus_kinds"])
             generation_prompt = _generation_prompt(compact, analysis)
-            self.assertIn("Keep chats, bills/documents, mixed notes, project artifacts, and index/ledger pages separated", generation_prompt)
+            self.assertIn("Keep WhatsApp chats, AI conversations, financial documents", generation_prompt)
             self.assertIn("Detected corpus kinds:", generation_prompt)
             generation_result = GenerationPlan()
             verification_prompt = _verification_prompt(compact, analysis, generation_result)
             self.assertIn("Corpus-kind instructions:", verification_prompt)
+            self.assertIn("Prompt-profile instructions:", verification_prompt)
+
+    def test_prompt_profiles_override_nearest_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus_root = Path(tmp) / "corpus"
+            chats_dir = corpus_root / "exports" / "chats"
+            chats_dir.mkdir(parents=True, exist_ok=True)
+            (chats_dir / "thread.md").write_text("# Thread\nAlice: ship it\n", encoding="utf-8")
+            profile_path = corpus_root / "wikimaker.profiles.json"
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "profiles": {
+                            "relationship_chat": {
+                                "corpus_kind": "whatsapp_chats",
+                                "guidance": "Capture relationship context and promises.",
+                                "extraction_fields": ["people", "promises"],
+                            }
+                        },
+                        "folder_rules": [
+                            {"path": "exports", "profile": "mixed_notes"},
+                            {"path": "exports/chats", "profile": "relationship_chat", "corpus_kind": "whatsapp_chats"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            scan = apply_prompt_profiles(scan_corpus(corpus_root), corpus_root=corpus_root)
+            record = scan["files"]["exports/chats/thread.md"]
+            self.assertEqual(record["prompt_profile"]["name"], "relationship_chat")
+            self.assertEqual(record["corpus_kind"], "whatsapp_chats")
+            compact = _compact_scan_for_prompt(scan, {"added": [], "changed": [], "removed": [], "unchanged": []})
+            prompt = _analysis_prompt(compact)
+            self.assertIn("Capture relationship context and promises.", prompt)
 
     def test_snapshot_diff_and_telemetry_counts(self) -> None:
         previous = {"files": {"a.md": {"sha256": "1"}}}
@@ -274,6 +344,9 @@ A loose set of mixed notes and ideas.
             browser_data = json.loads((output_root / "browser" / "data.json").read_text(encoding="utf-8"))
             self.assertTrue(browser_data["library_pages"][0]["links_to"])
             self.assertTrue(any(page["linked_from"] for page in browser_data["library_pages"]))
+            self.assertIn("privacy", browser_data)
+            self.assertEqual(browser_data["privacy"]["browser"]["classification"], "static-local")
+            self.assertIn("facets", browser_data)
             self.assertIn("WikiMaker Browser", browser_text)
             self.assertIn("sourceGrid", browser_text)
             self.assertIn("libraryGrid", browser_text)
@@ -287,6 +360,10 @@ A loose set of mixed notes and ideas.
             self.assertIn("library pages", browser_text)
             self.assertIn("Links to", browser_text)
             self.assertIn("Linked from", browser_text)
+            self.assertIn("Topics and entities", browser_text)
+            self.assertIn("Settings / Privacy", browser_text)
+            self.assertIn("_privacy.md", browser_text)
+            self.assertNotIn("fetch(", browser_text)
 
             source_stubs = write_source_stubs(config, scan, diff, pipeline["generation"])
             self.assertTrue(any(path.name == "notes__a.md" for path in source_stubs))
@@ -296,6 +373,27 @@ A loose set of mixed notes and ideas.
             self.assertIn("## Navigation", stub_text)
             self.assertIn("## Topics", stub_text)
             self.assertIn("## Entities", stub_text)
+            self.assertIn("## Links to", stub_text)
+            self.assertIn("## Linked from", stub_text)
+
+            knowledge_paths = write_knowledge_pages(config, pipeline, scan)
+            self.assertTrue(any("_topics" in str(path) for path in knowledge_paths))
+            self.assertTrue(any("_entities" in str(path) for path in knowledge_paths))
+            topic_page = output_root / "wiki-sets" / "_topics" / "alpha-topic.md"
+            entity_page = output_root / "wiki-sets" / "_entities" / "beta-entity.md"
+            self.assertTrue(topic_page.exists())
+            self.assertTrue(entity_page.exists())
+            topic_text = topic_page.read_text(encoding="utf-8")
+            self.assertIn("## Sources", topic_text)
+            self.assertIn("## Evidence / Truth trail", topic_text)
+            self.assertIn("## Contradictions / Tensions", topic_text)
+
+            privacy_path = write_privacy_report(config, scan, {"privacy": classify_endpoint_privacy(config.openai_base_url)})
+            self.assertIn("Browser network posture", privacy_path.read_text(encoding="utf-8"))
+            health = build_wiki_health(scan, pipeline, views["graph"])
+            self.assertIn("counts", health)
+            health_path = write_health_report(output_root, health)
+            self.assertTrue(health_path.exists())
 
     def test_page_roles_separate_primary_and_navigation_views(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -467,6 +565,8 @@ A loose set of mixed notes and ideas.
             self.assertIn("Primary source pages", root_text)
             self.assertIn("Navigation pages", root_text)
             self.assertIn("## Jump table", root_text)
+            self.assertIn("[_Privacy boundary](_privacy.md)", root_text)
+            self.assertIn("[_Health check](_health.md)", root_text)
             self.assertIn("## Source pages", root_text)
             self.assertIn("| Title | Provenance | Source markdown | Stub | External/source link |", root_text)
             self.assertIn("Knowledge Page, chat, whatsapp", root_text)
@@ -475,6 +575,118 @@ A loose set of mixed notes and ideas.
             self.assertIn("[source stub](sources/notes__alpha.md)", root_text)
             self.assertIn("https://example.com/alpha", root_text)
             self.assertIn("https://example.com/beta-thread", root_text)
+
+    def test_runner_generates_static_wiki_artifacts_with_mock_llm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corpus_root = root / "corpus"
+            output_root = root / "output"
+            state_root = root / "state"
+            telemetry_root = root / "telemetry"
+            (corpus_root / "chats").mkdir(parents=True, exist_ok=True)
+            (corpus_root / "bills").mkdir(parents=True, exist_ok=True)
+            (corpus_root / "chats" / "team.md").write_text(
+                "# Team Chat\n\nAlice: ship the launch plan after invoice review.\nBob: agreed.\n",
+                encoding="utf-8",
+            )
+            (corpus_root / "bills" / "invoice.md").write_text(
+                "# Invoice 42\n\nVendor: ACME Corp\nAmount: $42.00\nDue: 2026-06-01\n",
+                encoding="utf-8",
+            )
+            config = WikiMakerConfig(
+                corpus_root=corpus_root,
+                output_root=output_root,
+                state_root=state_root,
+                telemetry_root=telemetry_root,
+                analysis_model="mock-analysis",
+                generation_model="mock-generation",
+                review_model="mock-review",
+            )
+
+            def fake_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config_dict: dict[str, Any]) -> dict[str, Any]:
+                self.assertIn("prompt_profile", scan["files"]["chats/team.md"])
+                self.assertIn("prompt_profile", scan["files"]["bills/invoice.md"])
+                return {
+                    "llm_used": True,
+                    "errors": [],
+                    "analysis": {
+                        "corpus_summary": "Launch chat plus invoice corpus.",
+                        "corpus_kinds": scan.get("corpus_kinds", []),
+                        "topic_clusters": ["Launch Plan"],
+                        "entity_clusters": ["Alice Nguyen", "ACME Corp"],
+                        "duplicate_clusters": ["Invoice review repeats in team chat"],
+                        "contradiction_clusters": ["Invoice date needs confirmation"],
+                        "reorg_suggestions": [],
+                        "confidence": 0.8,
+                    },
+                    "generation": {
+                        "root_index_summary": "Mock generated root index.",
+                        "dashboard_summary": "Mock generated dashboard.",
+                        "stats_summary": "Mock generated stats.",
+                        "source_pages": [
+                            {
+                                "path": "chats/team.md",
+                                "title": "Team Chat",
+                                "page_role": "thread_page",
+                                "summary": "Alice and Bob discuss launch timing and invoice review.",
+                                "source_kind": "chat",
+                                "platform": "markdown",
+                                "topics": ["Launch Plan"],
+                                "entities": ["Alice Nguyen", "ACME Corp"],
+                                "related_pages": ["Invoice 42"],
+                                "used_in": ["Launch Operations"],
+                                "key_snippets": ["Alice: ship the launch plan after invoice review."],
+                            },
+                            {
+                                "path": "bills/invoice.md",
+                                "title": "Invoice 42",
+                                "page_role": "knowledge_page",
+                                "summary": "ACME invoice with amount and due date.",
+                                "source_kind": "bill",
+                                "platform": "markdown",
+                                "topics": ["Launch Plan"],
+                                "entities": ["ACME Corp"],
+                                "related_pages": ["Team Chat"],
+                                "used_in": ["Launch Operations"],
+                                "key_snippets": ["Amount: $42.00"],
+                            },
+                        ],
+                        "wiki_set_pages": [
+                            {
+                                "name": "Launch Operations",
+                                "purpose": "Cross-links launch chat and invoice evidence.",
+                                "pages": ["Team Chat", "Invoice 42"],
+                            }
+                        ],
+                        "needed_followups": [],
+                        "confidence": 0.8,
+                    },
+                    "verification": {"approved": True, "findings": [], "changes_requested": [], "confidence": 0.8},
+                }
+
+            with patch("wikimaker_runner.run_pipeline", side_effect=fake_pipeline):
+                result = run(config)
+
+            self.assertEqual(result["scan"]["total_files"], 2)
+            self.assertTrue((output_root / "_privacy.md").exists())
+            self.assertTrue((output_root / "_health.md").exists())
+            self.assertTrue((output_root / "browser" / "index.html").exists())
+            self.assertTrue((output_root / "browser" / "data.json").exists())
+            self.assertTrue((output_root / "wiki-sets" / "_topics" / "launch-plan.md").exists())
+            self.assertTrue((output_root / "wiki-sets" / "_entities" / "acme-corp.md").exists())
+            self.assertTrue((output_root / "sources" / "chats__team.md").exists())
+            self.assertTrue((state_root / "corpus_snapshot.json").exists())
+            html = (output_root / "browser" / "index.html").read_text(encoding="utf-8")
+            self.assertNotIn("fetch(", html)
+            self.assertNotIn("radial-gradient", html)
+            self.assertNotIn("hero-side card", html)
+            browser_data = json.loads((output_root / "browser" / "data.json").read_text(encoding="utf-8"))
+            self.assertEqual(browser_data["privacy"]["model_endpoint"]["classification"], "lan")
+            self.assertEqual(browser_data["privacy"]["browser"]["classification"], "static-local")
+            source_text = (output_root / "sources" / "chats__team.md").read_text(encoding="utf-8")
+            self.assertIn("## Links to", source_text)
+            self.assertIn("Invoice 42", source_text)
+            self.assertIn("## Linked from", source_text)
 
     def test_source_stub_names_are_sanitized_for_weird_paths(self) -> None:
 

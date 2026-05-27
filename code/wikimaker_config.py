@@ -29,6 +29,8 @@ class WikiMakerConfig:
     sample_files: int = 5
     progress_every: int = 100
     dry_run: bool = False
+    allow_remote_llm: bool = False
+    prompt_profile_path: str = ""
 
     @classmethod
     def from_env_and_args(cls, **overrides: Any) -> "WikiMakerConfig":
@@ -64,6 +66,8 @@ class WikiMakerConfig:
         sample_files = int(pick("WIKIMAKER_SAMPLE_FILES", pick("sample_files", "5")) or 5)
         progress_every = int(pick("WIKIMAKER_PROGRESS_EVERY", pick("progress_every", "100")) or 100)
         dry_run = _boolish(pick("WIKIMAKER_DRY_RUN", pick("dry_run", "0")))
+        allow_remote_llm = _boolish(pick("WIKIMAKER_ALLOW_REMOTE_LLM", pick("allow_remote_llm", "0")))
+        prompt_profile_path = pick("WIKIMAKER_PROMPT_PROFILE", pick("prompt_profile_path", ""))
 
         return cls(
             corpus_root=corpus_root,
@@ -85,6 +89,8 @@ class WikiMakerConfig:
             sample_files=sample_files,
             progress_every=progress_every,
             dry_run=dry_run,
+            allow_remote_llm=allow_remote_llm,
+            prompt_profile_path=prompt_profile_path,
         )
 
     def as_dict(self) -> dict[str, Any]:

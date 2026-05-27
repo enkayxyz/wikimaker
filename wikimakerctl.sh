@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="/Users/enkay/dev/wikimaker"
-CONDA_ENV="FileAnalyze"
+CONDA_ENV="${WIKIMAKER_CONDA_ENV:-wikimaker}"
 CORPUS_ROOT_DEFAULT="/Users/enkay/extracts"
 OUTPUT_ROOT_DEFAULT="/Users/enkay/extracts/wiki-build/output"
 STATE_ROOT_DEFAULT="/Users/enkay/extracts/wiki-build/state"
@@ -27,6 +27,7 @@ assume_yes="${WIKIMAKER_ASSUME_YES:-0}"
 print_plan() {
   cat <<EOF
 WikiMaker run plan
+  conda env:  $CONDA_ENV
   corpus:     $corpus_root
   output:     $output_root
   state:      $state_root
@@ -34,6 +35,45 @@ WikiMaker run plan
   local LLM:  $base_url
   model:      $model
 EOF
+}
+
+print_status() {
+  print_plan
+  echo
+  echo "Environment:"
+  if conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV"; then
+    conda run -n "$CONDA_ENV" python --version
+  else
+    echo "  missing conda env: $CONDA_ENV"
+  fi
+  echo
+  echo "Run state:"
+  if is_running; then
+    echo "  running: yes (pid $(cat "$PID_FILE"))"
+  else
+    echo "  running: no"
+  fi
+  echo "  pid file: $PID_FILE"
+  echo "  log file: $LOG_FILE"
+  if [[ -f "$LOG_FILE" ]]; then
+    echo
+    echo "Recent log:"
+    tail -20 "$LOG_FILE"
+  fi
+  echo
+  echo "Artifacts:"
+  for artifact in \
+    "$output_root/_privacy.md" \
+    "$output_root/_health.md" \
+    "$output_root/browser/index.html" \
+    "$output_root/browser/data.json" \
+    "$telemetry_root/latest.json"; do
+    if [[ -f "$artifact" ]]; then
+      echo "  ok:      $artifact"
+    else
+      echo "  missing: $artifact"
+    fi
+  done
 }
 
 run_wikimaker() {
@@ -229,13 +269,7 @@ case "$cmd" in
     rm -f "$PID_FILE"
     ;;
   status)
-    if is_running; then
-      echo "WikiMaker running (pid $(cat "$PID_FILE"))."
-      echo "Log: $LOG_FILE"
-    else
-      echo "WikiMaker not running."
-      exit 1
-    fi
+    print_status
     ;;
   logs)
     if [[ ! -f "$LOG_FILE" ]]; then

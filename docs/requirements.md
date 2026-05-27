@@ -194,3 +194,22 @@ A v0001 implementation is acceptable if it can:
 9. detect deltas on later runs
 10. emit telemetry and a change report
 11. fail clearly when the model backend is unavailable
+
+## Runtime and privacy requirements
+
+- Python 3.11 or newer is required.
+- Test tooling should be installed from `requirements.txt`, including `pytest`.
+- Every run should classify the model endpoint as local, LAN, or remote.
+- Remote model endpoints must require explicit opt-in.
+- Generated browser output must not include remote fonts, image lookups, analytics, or hidden fetches.
+- The generated output should include `_privacy.md` and `_health.md`.
+
+## Prompt profile requirements
+
+- WikiMaker should infer corpus kind automatically.
+- A local profile file may override corpus/folder behavior.
+- Profile resolution should use the nearest matching folder rule.
+- Prompts should include the resolved profile guidance and extraction fields.
+- Built-in profiles must cover the current corpus families: WhatsApp chats, AI conversations, and financial documents.
+- Built-in profiles must also be ready for contacts, calendars, meeting notes, recording transcripts, emails, iMessages, personal notes, Google Docs, code repositories, project artifacts, index/ledger pages, and mixed notes.
+- Legacy `chats` and `bills_documents` profile names should remain available as aliases for older profile files.

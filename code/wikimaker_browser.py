@@ -8,6 +8,7 @@ from typing import Any
 
 from wikimaker_config import WikiMakerConfig
 from wikimaker_discovery import build_discovery_views, _source_stub_name, _wiki_set_dir_name
+from wikimaker_privacy import browser_network_posture, classify_endpoint_privacy
 
 
 def _browser_payload(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[str, list[str]], pipeline: dict[str, Any]) -> dict[str, Any]:
@@ -63,6 +64,8 @@ def _browser_payload(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[s
             "related_count": node.get("related_count", 0),
             "used_in_count": node.get("used_in_count", 0),
             "status": node.get("status", "new"),
+            "links_to": links_to_by_path.get(rel_path, list(page.get("related_pages", []) or [])),
+            "linked_from": linked_from_by_path.get(rel_path, []),
         }
         if page_role in {"index_page", "ledger_page", "duplicate_page", "contradiction_page"}:
             navigation_pages.append(page_payload)
@@ -145,11 +148,30 @@ def _browser_payload(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[s
 
     analysis = discovery.get("analysis", {})
     generation = discovery.get("generation", {})
+    external_links = sum(len(record.get("source_links") or []) for record in files.values() if isinstance(record, dict))
+    topic_facets = sorted({str(item).strip() for page in discovery.get("source_pages", []) for item in (page.get("topics") or []) if str(item).strip()})
+    entity_facets = sorted({str(item).strip() for page in discovery.get("source_pages", []) for item in (page.get("entities") or []) if str(item).strip()})
+    people_facets = [
+        entity
+        for entity in entity_facets
+        if 1 < len(entity.split()) <= 4 and any(ch.isupper() for ch in entity)
+    ][:24]
     return {
         "generated_at": discovery.get("generated_at"),
         "analysis": analysis,
         "generation": generation,
         "verification": discovery.get("verification", {}),
+        "privacy": {
+            "model_endpoint": classify_endpoint_privacy(config.openai_base_url),
+            "browser": browser_network_posture(has_active_fetches=False, external_links=external_links),
+            "allow_remote_llm": config.allow_remote_llm,
+            "prompt_profiles": scan.get("prompt_profiles", {}),
+        },
+        "facets": {
+            "topics": topic_facets,
+            "entities": entity_facets,
+            "people": people_facets,
+        },
         "counts": {
             "files": len(files),
             "semantic_source_pages": len(semantic_pages),
@@ -173,6 +195,8 @@ def _browser_payload(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[s
             "stats": "../_stats.md",
             "search": "../_search.md",
             "graph": "../_graph.json",
+            "privacy": "../_privacy.md",
+            "health": "../_health.md",
             "browser_data": "data.json",
         },
     }
@@ -192,6 +216,10 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
     corpus_summary = escape(str(payload.get("analysis", {}).get("corpus_summary") or payload.get("generation", {}).get("dashboard_summary") or ""))
     approved = payload.get("verification", {}).get("approved")
     confidence = payload.get("verification", {}).get("confidence")
+    endpoint_privacy = payload.get("privacy", {}).get("model_endpoint", {})
+    endpoint_classification = escape(str(endpoint_privacy.get("classification") or "unknown"))
+    endpoint_risk = escape(str(endpoint_privacy.get("risk") or "unknown"))
+    endpoint_scope = escape(str(endpoint_privacy.get("network_scope") or "unknown"))
 
     return f"""<!doctype html>
 <html lang=\"en\">
@@ -201,55 +229,44 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
   <title>WikiMaker Browser</title>
   <style>
     :root {{
-      color-scheme: dark;
-      --bg-top: #060b16;
-      --bg-bottom: #0b1324;
-      --glow-a: rgba(125, 211, 252, 0.18);
-      --glow-b: rgba(167, 139, 250, 0.16);
-      --panel: rgba(12, 19, 35, 0.92);
-      --panel-2: rgba(17, 25, 45, 0.92);
-      --surface: rgba(255, 255, 255, 0.03);
-      --line: rgba(148, 163, 184, 0.2);
-      --text: #e5eefb;
-      --muted: #97a6c6;
-      --accent: #7dd3fc;
-      --accent-2: #a78bfa;
-      --good: #4ade80;
-      --warn: #fbbf24;
-      --bad: #fb7185;
-      --shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
-      --pill-bg: rgba(148, 163, 184, 0.10);
-      --pill-line: rgba(148, 163, 184, 0.18);
-    }}
-    [data-theme="light"] {{
       color-scheme: light;
-      --bg-top: #f6f8fc;
-      --bg-bottom: #e8eef8;
-      --glow-a: rgba(125, 211, 252, 0.22);
-      --glow-b: rgba(167, 139, 250, 0.18);
-      --panel: rgba(255, 255, 255, 0.88);
-      --panel-2: rgba(248, 250, 252, 0.92);
-      --surface: rgba(15, 23, 42, 0.03);
-      --line: rgba(100, 116, 139, 0.20);
-      --text: #0f172a;
-      --muted: #475569;
-      --accent: #0369a1;
-      --accent-2: #6d28d9;
-      --good: #15803d;
-      --warn: #b45309;
-      --bad: #be123c;
-      --shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
-      --pill-bg: rgba(15, 23, 42, 0.04);
-      --pill-line: rgba(15, 23, 42, 0.08);
+      --bg: #f6f7f3;
+      --panel: #ffffff;
+      --surface: #f0f3ef;
+      --line: #d9dfd7;
+      --text: #202626;
+      --muted: #66706c;
+      --accent: #116b6f;
+      --accent-2: #8a4b2d;
+      --good: #207a4b;
+      --warn: #9b650f;
+      --bad: #b4233c;
+      --shadow: 0 6px 18px rgba(32, 38, 38, 0.08);
+      --pill-bg: #edf3f1;
+      --pill-line: #d5dfdc;
+    }}
+    [data-theme="dark"] {{
+      color-scheme: dark;
+      --bg: #171918;
+      --panel: #202321;
+      --surface: #272b28;
+      --line: #3b413d;
+      --text: #edf2ee;
+      --muted: #a3ada7;
+      --accent: #6fc2bd;
+      --accent-2: #e0a36e;
+      --good: #82d29d;
+      --warn: #e7bc5a;
+      --bad: #ef7f91;
+      --shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
+      --pill-bg: #26312f;
+      --pill-line: #374641;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at top left, var(--glow-a), transparent 25%),
-        radial-gradient(circle at top right, var(--glow-b), transparent 22%),
-        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+      background: var(--bg);
       color: var(--text);
       min-height: 100vh;
     }}
@@ -264,42 +281,42 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
       margin-bottom: 18px;
     }}
     .card {{
-      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 18px;
+      border-radius: 8px;
       box-shadow: var(--shadow);
     }}
     .hero-main {{ padding: 24px; }}
-    .kicker {{ text-transform: uppercase; letter-spacing: .12em; color: var(--muted); font-size: 12px; margin-bottom: 10px; }}
-    h1 {{ margin: 0 0 10px; font-size: clamp(2rem, 4vw, 3.5rem); }}
+    .kicker {{ text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-size: 12px; margin-bottom: 10px; }}
+    h1 {{ margin: 0 0 10px; font-size: 2rem; line-height: 1.15; }}
     .lead {{ color: var(--muted); font-size: 1.02rem; line-height: 1.55; max-width: 75ch; }}
     .meta {{ margin-top: 18px; display: flex; flex-wrap: wrap; gap: 10px; }}
     .pill {{
       display: inline-flex; align-items: center; gap: 8px;
-      padding: 8px 12px; border-radius: 999px;
+      padding: 7px 10px; border-radius: 8px;
       background: var(--pill-bg); border: 1px solid var(--pill-line);
       color: var(--text); font-size: 13px;
     }}
-    .pill strong {{ color: white; }}
+    .pill strong {{ color: var(--text); }}
     .hero-side {{ padding: 18px; display: grid; gap: 12px; }}
     .stat-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
-    .stat {{ padding: 16px; border-radius: 16px; background: var(--surface); border: 1px solid rgba(255,255,255,0.06); }}
+    .stat {{ padding: 16px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); }}
     .stat .num {{ font-size: 1.8rem; font-weight: 700; }}
-    .stat .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }}
+    .stat .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }}
     .toolbar {{ display: grid; grid-template-columns: 1fr auto; gap: 12px; margin: 18px 0; align-items: start; }}
     .searchbox {{
-      width: 100%; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line);
+      width: 100%; padding: 14px 16px; border-radius: 8px; border: 1px solid var(--line);
       background: var(--surface); color: var(--text); font-size: 1rem;
     }}
     .nav {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; align-items: center; }}
     .nav a {{
-      display: inline-flex; align-items: center; padding: 10px 12px; border-radius: 12px;
-      background: var(--surface); border: 1px solid rgba(255,255,255,0.08);
+      display: inline-flex; align-items: center; padding: 10px 12px; border-radius: 8px;
+      background: var(--surface); border: 1px solid var(--line);
       color: var(--text);
     }}
     .theme-toggle {{
       display: inline-flex; align-items: center; gap: 8px;
-      padding: 10px 12px; border-radius: 12px;
+      padding: 10px 12px; border-radius: 8px;
       border: 1px solid var(--line);
       background: var(--surface);
       color: var(--text);
@@ -314,24 +331,24 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
     .compact-list {{ display: grid; gap: 10px; }}
     .compact-item {{
       display: grid; gap: 6px;
-      padding: 12px 14px; border-radius: 14px;
+      padding: 12px 14px; border-radius: 8px;
       background: var(--surface);
-      border: 1px solid rgba(255,255,255,0.07);
+      border: 1px solid var(--line);
       cursor: pointer;
     }}
     .compact-item .title {{ font-weight: 650; }}
     .compact-item .body {{ color: var(--muted); font-size: 0.92rem; line-height: 1.45; }}
     .item {{
-      padding: 14px; border-radius: 16px; background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.07); cursor: pointer;
+      padding: 14px; border-radius: 8px; background: var(--surface);
+      border: 1px solid var(--line); cursor: pointer;
       transition: transform .15s ease, border-color .15s ease, background .15s ease;
     }}
-    .item:hover {{ transform: translateY(-2px); border-color: rgba(125, 211, 252, 0.45); background: rgba(255,255,255,0.05); }}
+    .item:hover {{ transform: translateY(-1px); border-color: var(--accent); background: var(--panel); }}
     .item .title {{ font-weight: 700; margin-bottom: 6px; }}
     .item .body {{ color: var(--muted); font-size: 0.95rem; line-height: 1.45; }}
     .tagrow {{ margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }}
-    .tag {{ font-size: 12px; padding: 5px 8px; border-radius: 999px; background: rgba(125, 211, 252, 0.12); color: #bae6fd; border: 1px solid rgba(125, 211, 252, 0.18); }}
-    .status {{ font-size: 12px; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); }}
+    .tag {{ font-size: 12px; padding: 5px 8px; border-radius: 8px; background: var(--pill-bg); color: var(--accent); border: 1px solid var(--pill-line); }}
+    .status {{ font-size: 12px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); }}
     .status.added {{ color: var(--good); }}
     .status.changed {{ color: var(--warn); }}
     .status.removed {{ color: var(--bad); }}
@@ -346,7 +363,7 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
     .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9rem; }}
     .table-wrap {{ overflow-x: auto; }}
     table {{ width: 100%; border-collapse: collapse; }}
-    th, td {{ padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; vertical-align: top; }}
+    th, td {{ padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
     th {{ color: var(--muted); font-weight: 600; font-size: 0.9rem; }}
     .footer {{ margin: 18px 0 6px; color: var(--muted); font-size: 0.9rem; }}
     @media (max-width: 1100px) {{
@@ -377,16 +394,17 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
           <span class="pill"><strong>Entities</strong> {entities_count}</span>
           <span class="pill"><strong>Verified</strong> {approved}</span>
           <span class="pill"><strong>Confidence</strong> {confidence}</span>
+          <span class="pill"><strong>Model</strong> {endpoint_classification} / {endpoint_risk}</span>
         </div>
       </div>
-      <div class="hero-side card">
+      <div class="hero-side">
         <div class="stat-grid">
           <div class="stat"><div class="num" id="countSemantic">{semantic_sources_count}</div><div class="label">semantic pages</div></div>
           <div class="stat"><div class="num" id="countLibrary">{library_pages_count}</div><div class="label">library pages</div></div>
           <div class="stat"><div class="num" id="countSets">{wiki_sets_count}</div><div class="label">wiki sets</div></div>
           <div class="stat"><div class="num" id="countEdges">{edges_count}</div><div class="label">graph edges</div></div>
         </div>
-        <div class="subtle">No outbound fetches. No remote fonts. Static, local-first browsing only.</div>
+        <div class="subtle">No outbound fetches. No remote fonts. Static, local-first browsing only. Model scope: {endpoint_scope}.</div>
       </div>
     </div>
 
@@ -399,6 +417,8 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
         <a href="../_stats.md">Stats</a>
         <a href="../_search.md">Search</a>
         <a href="../_graph.json">Graph JSON</a>
+        <a href="../_privacy.md">Privacy</a>
+        <a href="../_health.md">Health</a>
       </div>
     </div>
 
@@ -408,6 +428,23 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
           <h2>Most connected pages</h2>
           <div class="subtle">Pages with the strongest graph signal and link density.</div>
           <div class="compact-list" id="connectedList"></div>
+        </section>
+
+        <section class="card section" style="margin-top:18px;">
+          <h2>Topics and entities</h2>
+          <div class="subtle">Click a chip to filter the wiki by topic, person, or entity.</div>
+          <div class="detail-section">
+            <h3>People</h3>
+            <div class="tagrow" id="peopleFacetRow"></div>
+          </div>
+          <div class="detail-section">
+            <h3>Topics</h3>
+            <div class="tagrow" id="topicFacetRow"></div>
+          </div>
+          <div class="detail-section">
+            <h3>Entities</h3>
+            <div class="tagrow" id="entityFacetRow"></div>
+          </div>
         </section>
 
         <section class="card section" style="margin-top:18px;">
@@ -443,6 +480,18 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
             </table>
           </div>
         </section>
+
+        <section class="card section" style="margin-top:18px;">
+          <h2>Settings / Privacy</h2>
+          <div class="kv">
+            <div>Model endpoint</div><strong id="privacyEndpoint"></strong>
+            <div>Network scope</div><strong id="privacyScope"></strong>
+            <div>Risk</div><strong id="privacyRisk"></strong>
+            <div>Browser fetches</div><strong id="privacyFetches"></strong>
+            <div>Prompt profiles</div><strong id="privacyProfiles"></strong>
+          </div>
+          <div class="subtle">Models are user-selectable, but endpoint classification shows when corpus prompts may leave this machine or LAN.</div>
+        </section>
       </div>
 
       <aside class="card panel detail" id="detailPanel">
@@ -467,6 +516,9 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
     const edgeTable = document.getElementById('edgeTable');
     const connectedList = document.getElementById('connectedList');
     const recentList = document.getElementById('recentList');
+    const peopleFacetRow = document.getElementById('peopleFacetRow');
+    const topicFacetRow = document.getElementById('topicFacetRow');
+    const entityFacetRow = document.getElementById('entityFacetRow');
     const detailKv = document.getElementById('detailKv');
     const detailBody = document.getElementById('detailBody');
     const search = document.getElementById('search');
@@ -486,6 +538,20 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
     function tagList(items) {{
       if (!items || !items.length) return '<span class="subtle">None</span>';
       return items.map(item => `<span class="tag">${{esc(item)}}</span>`).join('');
+    }}
+
+    function renderFacetRow(container, items) {{
+      if (!items || !items.length) {{
+        container.innerHTML = '<span class="subtle">None detected</span>';
+        return;
+      }}
+      container.innerHTML = items.slice(0, 36).map(item => `<button class="theme-toggle facet-button" type="button" data-filter="${{esc(item)}}">${{esc(item)}}</button>`).join('');
+      for (const button of container.querySelectorAll('.facet-button')) {{
+        button.addEventListener('click', () => {{
+          search.value = button.dataset.filter || '';
+          renderAll(search.value);
+        }});
+      }}
     }}
 
     function applyTheme(theme) {{
@@ -654,6 +720,16 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
       }}
     }}
 
+    function renderPrivacy() {{
+      const endpoint = data.privacy?.model_endpoint || {{}};
+      const browser = data.privacy?.browser || {{}};
+      document.getElementById('privacyEndpoint').textContent = endpoint.classification || 'unknown';
+      document.getElementById('privacyScope').textContent = endpoint.network_scope || 'unknown';
+      document.getElementById('privacyRisk').textContent = endpoint.risk || 'unknown';
+      document.getElementById('privacyFetches').textContent = String(browser.active_outbound_fetches ?? false);
+      document.getElementById('privacyProfiles').textContent = data.privacy?.prompt_profiles?.source_path || 'built-in defaults';
+    }}
+
     function setDetailHeader(label, sublabel) {{
       detailKv.innerHTML = `<div>${{esc(label)}}</div><strong>${{esc(sublabel)}}</strong>`;
     }}
@@ -745,18 +821,22 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
     }}
 
     search.addEventListener('input', () => {{
-      const value = search.value || '';
+      renderAll(search.value || '');
+    }});
+
+    function renderAll(value) {{
       renderHomeLists(value);
       renderSourceCards(value);
       renderLibraryCards(value);
       renderWikiSets(value);
-    }});
+    }}
 
-    renderHomeLists('');
-    renderSourceCards('');
-    renderLibraryCards('');
-    renderWikiSets('');
+    renderFacetRow(peopleFacetRow, data.facets?.people || []);
+    renderFacetRow(topicFacetRow, data.facets?.topics || []);
+    renderFacetRow(entityFacetRow, data.facets?.entities || []);
+    renderAll('');
     renderEdges();
+    renderPrivacy();
     if (data.library_pages.length) showSource(data.library_pages[0]);
     else if (data.sources.length) showSource(data.sources[0]);
   </script>

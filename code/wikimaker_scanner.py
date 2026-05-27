@@ -13,10 +13,32 @@ TITLE_RE = re.compile(r"^#\s+(.*)$")
 
 def _family_from_text(text: str) -> str:
     lowered = text.lower()
-    if any(token in lowered for token in ("invoice", "receipt", "bill", "statement", "vendor", "amount due", "subtotal", "total due", "due date")):
-        return "bills_documents"
-    if any(token in lowered for token in ("whatsapp", "chat", "conversation", "thread", "message", "messages", "speaker:", "am", "pm")):
-        return "chats"
+    if any(token in lowered for token in ("invoice", "receipt", "bill", "statement", "vendor", "amount due", "subtotal", "total due", "due date", "account number", "transaction", "balance", "bank", "credit card")):
+        return "financial_documents"
+    if any(token in lowered for token in ("chatgpt", "claude", "gemini", "perplexity", "assistant:", "user:", "system prompt", "tool call", "model:", "ai conversation", "llm")):
+        return "ai_conversations"
+    if any(token in lowered for token in ("whatsapp", "wa.me", "chatstorage.sqlite")):
+        return "whatsapp_chats"
+    if any(token in lowered for token in ("imessage", "sms", "text message", "messages.app")):
+        return "imessages"
+    if any(token in lowered for token in ("email", "from:", "to:", "cc:", "bcc:", "subject:", "inbox", "sent mail")):
+        return "emails"
+    if any(token in lowered for token in ("calendar", "event", "attendee", "attendees", "recurring event", "meeting invite")):
+        return "calendars"
+    if any(token in lowered for token in ("meeting notes", "agenda", "action items", "attendees", "minutes")):
+        return "meeting_notes"
+    if any(token in lowered for token in ("transcript", "recording", "speaker 1", "speaker 2", "audio", "video recording")):
+        return "recording_transcripts"
+    if any(token in lowered for token in ("contact card", "phone:", "email:", "address:", "birthday:", "organization:")):
+        return "contacts"
+    if any(token in lowered for token in ("google docs", "docs.google.com", "document owner", "collaborators")):
+        return "google_docs"
+    if any(token in lowered for token in ("repository", "readme", "pull request", "commit", "function ", "class ", "def ", "import ", "package.json", "pyproject.toml")):
+        return "code_repositories"
+    if any(token in lowered for token in ("personal note", "journal entry", "reflection", "daily note")):
+        return "personal_notes"
+    if any(token in lowered for token in ("chat", "conversation", "thread", "message", "messages", "speaker:", "am", "pm")):
+        return "whatsapp_chats"
     if any(token in lowered for token in ("project", "roadmap", "milestone", "todo", "task", "issue", "spec", "deliverable", "blocker")):
         return "project_artifacts"
     if any(token in lowered for token in ("index", "table of contents", "toc", "ledger", "journal", "changelog", "change log", "log")):
@@ -27,10 +49,31 @@ def _family_from_text(text: str) -> str:
 def _infer_corpus_kind(path: Path, title: str, frontmatter: dict[str, Any], headings: list[str], text: str) -> str:
     explicit = str(frontmatter.get("corpus_kind") or frontmatter.get("source_kind") or frontmatter.get("kind") or "").strip().lower()
     if explicit:
-        if any(token in explicit for token in ("invoice", "bill", "receipt", "statement", "document")):
-            return "bills_documents"
+        explicit = explicit.replace("-", "_").replace(" ", "_")
+        if any(token in explicit for token in ("invoice", "bill", "receipt", "statement", "financial", "bank", "transaction")):
+            return "financial_documents"
+        if any(token in explicit for token in ("ai_conversation", "chatgpt", "claude", "gemini", "llm")):
+            return "ai_conversations"
         if any(token in explicit for token in ("whatsapp", "chat", "conversation", "thread", "message")):
-            return "chats"
+            return "whatsapp_chats"
+        if any(token in explicit for token in ("imessage", "sms")):
+            return "imessages"
+        if "email" in explicit:
+            return "emails"
+        if any(token in explicit for token in ("calendar", "event")):
+            return "calendars"
+        if any(token in explicit for token in ("meeting", "minutes")):
+            return "meeting_notes"
+        if any(token in explicit for token in ("recording", "transcript", "audio", "video")):
+            return "recording_transcripts"
+        if "contact" in explicit:
+            return "contacts"
+        if any(token in explicit for token in ("google_doc", "gdoc")):
+            return "google_docs"
+        if any(token in explicit for token in ("code", "repo", "repository")):
+            return "code_repositories"
+        if any(token in explicit for token in ("personal_note", "journal", "reflection", "daily_note")):
+            return "personal_notes"
         if any(token in explicit for token in ("project", "task", "issue", "roadmap", "spec", "milestone")):
             return "project_artifacts"
         if any(token in explicit for token in ("index", "ledger", "journal", "log", "toc")):
