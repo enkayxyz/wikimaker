@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-import html
+import hashlib
 import json
 import re
 from typing import Any
@@ -55,7 +55,19 @@ def _safe_segment(value: str) -> str:
 
 
 def _source_stub_name(rel_path: str) -> str:
-    return "__".join(_safe_segment(part) for part in Path(rel_path).parts)
+    parts = [_safe_segment(part) for part in Path(rel_path).parts]
+    candidate = "__".join(parts)
+    if len(candidate) <= 160:
+        return candidate
+    digest = hashlib.sha1(rel_path.encode("utf-8")).hexdigest()[:12]
+    if len(parts) == 1:
+        prefix = [parts[0][:48]]
+    elif len(parts) == 2:
+        prefix = [parts[0][:24], parts[1][:80]]
+    else:
+        prefix = [parts[0][:24], parts[1][:24], parts[-1][:80]]
+    shortened = "__".join(prefix + [digest])
+    return shortened[:160]
 
 
 def _wiki_set_dir_name(name: str) -> str:
@@ -83,6 +95,78 @@ def _wiki_sets(pipeline: dict[str, Any]) -> list[dict[str, Any]]:
     generation = pipeline.get("generation", {})
     pages = generation.get("wiki_set_pages", [])
     return [page for page in pages if isinstance(page, dict)]
+
+
+ALLOWED_PAGE_ROLES = {
+    "knowledge_page",
+    "thread_page",
+    "index_page",
+    "ledger_page",
+    "duplicate_page",
+    "contradiction_page",
+}
+PRIMARY_PAGE_ROLES = {"knowledge_page", "thread_page"}
+NAVIGATION_PAGE_ROLES = ALLOWED_PAGE_ROLES - PRIMARY_PAGE_ROLES
+
+
+def _page_role(page: dict[str, Any], record: dict[str, Any] | None = None) -> str:
+    candidate = str(page.get("page_role") or (record or {}).get("page_role") or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if candidate in ALLOWED_PAGE_ROLES:
+        return candidate
+    text = " ".join(
+        str(value or "")
+        for value in (
+            page.get("path"),
+            page.get("title"),
+            page.get("source_kind"),
+            page.get("summary"),
+            (record or {}).get("title"),
+        )
+    ).lower()
+    if any(token in text for token in ("duplicate", "duplication", "mirror", "repeat")):
+        return "duplicate_page"
+    if any(token in text for token in ("contradiction", "conflict", "inconsistent", "dispute")):
+        return "contradiction_page"
+    if any(token in text for token in ("index", "table of contents", "toc", "overview")):
+        return "index_page"
+    if any(token in text for token in ("ledger", "log", "journal", "changelog", "change log")):
+        return "ledger_page"
+    if any(token in text for token in ("thread", "conversation", "chat", "message", "discussion")):
+        return "thread_page"
+    return "knowledge_page"
+
+
+def _page_role_rank(role: str) -> int:
+    return 0 if role in PRIMARY_PAGE_ROLES else 1
+
+
+def _source_page_sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        _page_role_rank(str(item.get("page_role") or "")),
+        -float(item.get("score", 0) or 0),
+        -float(item.get("backlinks", 0) or 0),
+        -float(item.get("related_count", 0) or 0),
+        -float(item.get("used_in_count", 0) or 0),
+        -float(item.get("outlinks", 0) or 0),
+        -float(item.get("mtime_ns", 0) or 0),
+        str(item.get("label", "")),
+    )
+
+
+def _connectedness_sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        -float(item.get("score", 0) or 0),
+        -float(item.get("backlinks", 0) or 0),
+        -float(item.get("related_count", 0) or 0),
+        -float(item.get("used_in_count", 0) or 0),
+        -float(item.get("outlinks", 0) or 0),
+        -float(item.get("mtime_ns", 0) or 0),
+        str(item.get("label", "")),
+    )
+
+
+def _is_navigation_page(page: dict[str, Any], record: dict[str, Any] | None = None) -> bool:
+    return _page_role(page, record) in NAVIGATION_PAGE_ROLES
 
 
 def build_discovery_views(scan: dict[str, Any], diff: dict[str, list[str]], pipeline: dict[str, Any]) -> dict[str, Any]:
@@ -167,12 +251,14 @@ def build_discovery_views(scan: dict[str, Any], diff: dict[str, list[str]], pipe
         if record.get("mtime_ns") is not None:
             recency_score = max(0.0, 1.0 - ((max_mtime - int(record.get("mtime_ns", 0) or 0)) / span))
         score = round((backlinks * 4.0) + (outlinks * 1.5) + (related_count * 2.5) + (used_in_count * 2.0) + (recency_score * 2.0), 3)
+        page_role = _page_role(page, record)
         scored_source_rows.append(
             {
                 "id": source_id,
                 "label": label,
                 "type": "source",
                 "path": rel_path,
+                "page_role": page_role,
                 "status": _status_for_path(rel_path, diff),
                 "source_kind": page.get("source_kind") or record.get("source_kind") or "",
                 "platform": page.get("platform") or record.get("platform") or "",
@@ -185,7 +271,7 @@ def build_discovery_views(scan: dict[str, Any], diff: dict[str, list[str]], pipe
             }
         )
 
-    scored_source_rows.sort(key=lambda item: (item.get("score", 0.0), item.get("backlinks", 0), item.get("outlinks", 0), item.get("label", "")), reverse=True)
+    scored_source_rows.sort(key=_source_page_sort_key)
     for rank, node in enumerate(scored_source_rows, start=1):
         node["rank"] = rank
         node_rows.append(node)
@@ -238,12 +324,11 @@ def write_discovery_views(config: WikiMakerConfig, scan: dict[str, Any], diff: d
 
     all_source_paths = sorted(files)
     connected_rows = sorted(
-        [node for node in graph["nodes"] if node.get("type") == "source"],
-        key=lambda item: (item.get("backlinks", 0), item.get("outlinks", 0), item.get("label", "")),
-        reverse=True,
+        [node for node in graph["nodes"] if node.get("type") == "source" and str(node.get("page_role") or "") in PRIMARY_PAGE_ROLES],
+        key=_connectedness_sort_key,
     )
     recent_rows = sorted(
-        [node for node in graph["nodes"] if node.get("type") == "source"],
+        [node for node in graph["nodes"] if node.get("type") == "source" and str(node.get("page_role") or "") in PRIMARY_PAGE_ROLES],
         key=lambda item: (item.get("mtime_ns", 0), item.get("label", "")),
         reverse=True,
     )
@@ -290,13 +375,13 @@ def write_discovery_views(config: WikiMakerConfig, scan: dict[str, Any], diff: d
         "## Most connected source pages",
     ])
     if connected_rows:
-        dashboard_lines.append("| Page | Backlinks | Outlinks | Status |")
-        dashboard_lines.append("| --- | --- | --- | --- |")
+        dashboard_lines.append("| Page | Score | Backlinks | Related | Used in | Outlinks | Status |")
+        dashboard_lines.append("| --- | --- | --- | --- | --- | --- | --- |")
         for row in connected_rows[:12]:
             safe_page_path = row['path'].replace('/', '__')
             label = _escape_md_cell(row['label'])
             dashboard_lines.append(
-                f"| [{label}](sources/{safe_page_path}) | {row['backlinks']} | {row['outlinks']} | {row['status']} |"
+                f"| [{label}](sources/{safe_page_path}) | {row['score']} | {row['backlinks']} | {row['related_count']} | {row['used_in_count']} | {row['outlinks']} | {row['status']} |"
             )
     else:
         dashboard_lines.append("- _None_")
@@ -395,17 +480,41 @@ def write_discovery_views(config: WikiMakerConfig, scan: dict[str, Any], diff: d
         "",
         "Use this page as a simple jump table until a richer search UI exists.",
         "",
+        "## Jump table",
+        "- [Source pages](#source-pages)",
+        "- [Navigation / index / ledger pages](#navigation-index-ledger-pages)",
+        "- [Wiki sets](#wiki-sets)",
+        "",
         "## Source pages",
-        "| Title | Path | Status | Links |",
-        "| --- | --- | --- | --- |",
+        "| Title | Role | Path | Status | Links |",
+        "| --- | --- | --- | --- | --- |",
     ]
-    for rel_path in all_source_paths:
-        record = files[rel_path]
+    primary_rows = [node for node in graph["nodes"] if node.get("type") == "source" and str(node.get("page_role") or "") in PRIMARY_PAGE_ROLES]
+    navigation_rows = [node for node in graph["nodes"] if node.get("type") == "source" and str(node.get("page_role") or "") in NAVIGATION_PAGE_ROLES]
+    for row in primary_rows:
+        rel_path = str(row.get("path") or "")
+        record = files.get(rel_path, {})
         page = by_path.get(rel_path, {})
         title = _escape_md_cell(page.get("title") or record.get("title") or Path(rel_path).stem)
+        role = _escape_md_cell(row.get("page_role") or page.get("page_role") or "knowledge_page")
         status = _status_for_path(rel_path, diff)
         link_count = len(_clean_list(page.get("related_pages"))) + len(_clean_list(page.get("used_in")))
-        search_lines.append(f"| {title} | `{rel_path}` | {status} | {link_count} |")
+        search_lines.append(f"| {title} | {role} | `{rel_path}` | {status} | {link_count} |")
+    search_lines.extend([
+        "",
+        "## Navigation / index / ledger pages",
+        "| Title | Role | Path | Status | Links |",
+        "| --- | --- | --- | --- | --- |",
+    ])
+    for row in navigation_rows:
+        rel_path = str(row.get("path") or "")
+        record = files.get(rel_path, {})
+        page = by_path.get(rel_path, {})
+        title = _escape_md_cell(page.get("title") or record.get("title") or Path(rel_path).stem)
+        role = _escape_md_cell(row.get("page_role") or page.get("page_role") or "knowledge_page")
+        status = _status_for_path(rel_path, diff)
+        link_count = len(_clean_list(page.get("related_pages"))) + len(_clean_list(page.get("used_in")))
+        search_lines.append(f"| {title} | {role} | `{rel_path}` | {status} | {link_count} |")
     search_lines.extend([
         "",
         "## Wiki sets",

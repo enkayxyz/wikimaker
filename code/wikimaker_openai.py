@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any, TypeVar
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field
@@ -15,6 +16,7 @@ T = TypeVar("T", bound=BaseModel)
 class SourcePagePlan(BaseModel):
     path: str = Field(description="Relative source file path or stable source identifier")
     title: str = Field(description="Human-readable page title")
+    page_role: str = Field(default="knowledge_page", description="Explicit role for the page: knowledge_page, thread_page, index_page, ledger_page, duplicate_page, or contradiction_page")
     summary: str = Field(description="Short source-summary of what the page contains")
     platform: str = Field(default="", description="Source platform or extractor label, if known")
     source_kind: str = Field(default="", description="Corpus kind such as bills or whatsapp, if known")
@@ -73,6 +75,81 @@ class VerificationPlan(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
+ALLOWED_PAGE_ROLES = {
+    "knowledge_page",
+    "thread_page",
+    "index_page",
+    "ledger_page",
+    "duplicate_page",
+    "contradiction_page",
+}
+
+
+def _normalise_page_role(value: Any) -> str:
+    role = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return role if role in ALLOWED_PAGE_ROLES else ""
+
+
+def _infer_page_role(item: dict[str, Any]) -> str:
+    explicit = _normalise_page_role(item.get("page_role") or item.get("role"))
+    if explicit:
+        return explicit
+    text = " ".join(str(item.get(field) or "") for field in ("path", "title", "source_kind", "summary", "corpus_summary")).lower()
+    if any(token in text for token in ("duplicate", "duplication", "mirror", "repeat")):
+        return "duplicate_page"
+    if any(token in text for token in ("contradiction", "conflict", "inconsistent", "dispute")):
+        return "contradiction_page"
+    if any(token in text for token in ("index", "table of contents", "toc", "overview")):
+        return "index_page"
+    if any(token in text for token in ("ledger", "log", "journal", "changelog", "change log")):
+        return "ledger_page"
+    if any(token in text for token in ("thread", "conversation", "chat", "message", "discussion")):
+        return "thread_page"
+    return "knowledge_page"
+
+
+def _coerce_source_page_plan(page: SourcePagePlan | dict[str, Any]) -> SourcePagePlan:
+    data = page.model_dump() if isinstance(page, SourcePagePlan) else dict(page)
+    data["page_role"] = _normalise_page_role(data.get("page_role")) or _infer_page_role(data)
+    return SourcePagePlan(**data)
+
+
+def _canonical_corpus_kind(value: str) -> str:
+    lowered = str(value or "").strip().lower().replace("/", "_").replace("-", "_")
+    if any(token in lowered for token in ("invoice", "bill", "receipt", "statement", "document")):
+        return "bills_documents"
+    if any(token in lowered for token in ("whatsapp", "chat", "conversation", "thread", "message")):
+        return "chats"
+    if any(token in lowered for token in ("project", "task", "issue", "roadmap", "spec", "milestone", "artifact")):
+        return "project_artifacts"
+    if any(token in lowered for token in ("index", "ledger", "journal", "log", "toc")):
+        return "index_ledger_pages"
+    if lowered in {"mixed_notes", "notes", "note", "mixed note"}:
+        return "mixed_notes"
+    return lowered or "mixed_notes"
+
+
+def _corpus_kind_guidance(corpus_kinds: list[str]) -> str:
+    guidance_map = {
+        "chats": "Chats: capture participants, thread structure, decisions, unresolved questions, and recurring entities.",
+        "bills_documents": "Bills/documents: capture dates, amounts, vendors, document type, reference numbers, and any ambiguous totals.",
+        "mixed_notes": "Mixed notes: group by topic, keep the source page's note-taking role explicit, and avoid over-merging unrelated notes.",
+        "project_artifacts": "Project artifacts: identify task names, milestones, solution paths, blockers, and deliverables.",
+        "index_ledger_pages": "Index/ledger pages: summarize structure, navigation role, coverage, and update history.",
+    }
+    ordered: list[str] = []
+    for kind in corpus_kinds:
+        canonical = _canonical_corpus_kind(kind)
+        if canonical not in ordered:
+            ordered.append(canonical)
+    if not ordered:
+        ordered = ["mixed_notes"]
+    lines = ["Corpus-kind instructions:"]
+    for kind in ordered:
+        lines.append(f"- {guidance_map.get(kind, f'{kind}: preserve provenance and separate it from unrelated families.')}")
+    return "\n".join(lines)
+
+
 def _boolish(value: str | bool | None) -> bool:
     if isinstance(value, bool):
         return value
@@ -84,8 +161,13 @@ def _boolish(value: str | bool | None) -> bool:
 def _compact_scan_for_prompt(scan: dict[str, Any], diff: dict[str, list[str]], *, limit: int = 30) -> dict[str, Any]:
     files = scan.get("files", {})
     compact_files: list[dict[str, Any]] = []
+    seen_kinds: list[str] = []
     for path in sorted(files)[:limit]:
         record = files[path]
+        source_kind = str(record.get("source_kind") or "").strip()
+        corpus_kind = _canonical_corpus_kind(record.get("corpus_kind") or source_kind)
+        if corpus_kind and corpus_kind not in seen_kinds:
+            seen_kinds.append(corpus_kind)
         compact_files.append(
             {
                 "path": path,
@@ -95,6 +177,8 @@ def _compact_scan_for_prompt(scan: dict[str, Any], diff: dict[str, list[str]], *
                 "source_links": record.get("source_links", [])[:8],
                 "size": record.get("size"),
                 "line_count": record.get("line_count"),
+                "source_kind": source_kind,
+                "corpus_kind": corpus_kind,
             }
         )
 
@@ -105,6 +189,7 @@ def _compact_scan_for_prompt(scan: dict[str, Any], diff: dict[str, list[str]], *
         "corpus_root": scan.get("corpus_root"),
         "file_count": len(files),
         "sample_limit": limit,
+        "corpus_kinds": [item for item in dict.fromkeys([str(kind).strip() for kind in (scan.get("corpus_kinds") or seen_kinds) if str(kind).strip()])],
         "sample_files": compact_files,
         "diff": {
             "added": _trim_list(diff.get("added", [])),
@@ -128,6 +213,12 @@ def _require_local_llm_config(config: dict[str, Any]) -> tuple[str, str, str]:
         raise RuntimeError(f"Unsupported provider '{provider}'. Use ollama or openai-compatible.")
     if not base_url:
         raise RuntimeError("Missing OPENAI_BASE_URL. Set it in /Users/enkay/dev/wikimaker/.env.")
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").strip()
+    if not host.startswith("192.168.86."):
+        raise RuntimeError(
+            f"Refusing non-local LLM endpoint '{base_url}'. WikiMaker real-corpus runs are restricted to the 192.168.86.* Ollama server."
+        )
     if provider != "ollama" and not api_key:
         raise RuntimeError("Missing OPENAI_API_KEY or OSAURUS_API_KEY in /Users/enkay/dev/wikimaker/.env.")
     return provider, base_url, api_key
@@ -203,29 +294,40 @@ def _parse_model_output(text: str, model_cls: type[T]) -> T:
 
 
 def _analysis_prompt(scan_prompt: dict[str, Any]) -> str:
+    corpus_kinds = [str(item) for item in scan_prompt.get("corpus_kinds", []) if item]
     return (
         "Stage 1: generate individual source-page plans for each Markdown file. "
-        "Return strict JSON only. Infer the corpus kinds present (for example, bills and whatsapp), and capture the source page title, summary, platform, source kind, timestamps, links, tags, topics, entities, snippets, what higher-level pages may use it later, and a brief corpus summary. "
+        "Return strict JSON only. Infer the corpus kinds present, and classify every page with an explicit page_role using only knowledge_page, thread_page, index_page, ledger_page, duplicate_page, or contradiction_page. "
+        "Capture the source page title, summary, platform, source kind, corpus kind, timestamps, links, tags, topics, entities, snippets, what higher-level pages may use it later, and a brief corpus summary. "
         "Preserve provenance and keep the output compact.\n\n"
+        f"Detected corpus kinds: {', '.join(corpus_kinds) if corpus_kinds else 'mixed_notes'}\n\n"
+        f"{_corpus_kind_guidance(corpus_kinds)}\n\n"
         f"SCAN_JSON:\n{json.dumps(scan_prompt, indent=2, sort_keys=True)}"
     )
 
 
 def _generation_prompt(scan_prompt: dict[str, Any], analysis: AnalysisPlan) -> str:
+    corpus_kinds = [str(item) for item in analysis.corpus_kinds or scan_prompt.get("corpus_kinds", []) if item]
     return (
         "Stage 2: identify commonality across the source pages and update the source-page plans with new insights. Return strict JSON only. "
-        "Cluster related source pages into wiki sets, separate distinct corpora when needed (for example, bills vs whatsapp), identify duplicates, contradictions, and evolving topics, propose wiki-set page names, draft concise root-index, dashboard, and stats summaries, and fill each source page's used-in links when relevant. "
-        "Preserve backlinks and evidence.\n\n"
+        "Cluster related source pages into wiki sets, separate distinct corpora when needed, identify duplicates, contradictions, and evolving topics, propose wiki-set page names, draft concise root-index, dashboard, and stats summaries, and fill each source page's used-in links when relevant. "
+        "Preserve backlinks, page roles, and evidence, and keep page_role assignments stable unless a page clearly changes role. "
+        "Keep chats, bills/documents, mixed notes, project artifacts, and index/ledger pages separated when they would otherwise blur together.\n\n"
+        f"Detected corpus kinds: {', '.join(corpus_kinds) if corpus_kinds else 'mixed_notes'}\n\n"
+        f"{_corpus_kind_guidance(corpus_kinds)}\n\n"
         f"SCAN_JSON:\n{json.dumps(scan_prompt, indent=2, sort_keys=True)}\n\n"
         f"ANALYSIS_JSON:\n{json.dumps(analysis.model_dump(), indent=2, sort_keys=True)}"
     )
 
 
 def _verification_prompt(scan_prompt: dict[str, Any], analysis: AnalysisPlan, generation: GenerationPlan) -> str:
+    corpus_kinds = [str(item) for item in analysis.corpus_kinds or scan_prompt.get("corpus_kinds", []) if item]
     return (
         "Stage 3: update and synthesize the wiki from the discovered commonality. Return strict JSON only. "
-        "Check whether the source-page plans and wiki-set plans preserve provenance, backlinks, duplicates, evolution, contradictions, and local-only model assumptions. "
+        "Check whether the source-page plans and wiki-set plans preserve provenance, backlinks, duplicates, evolution, contradictions, local-only model assumptions, and corpus-aware branching. "
         "Flag unsupported claims, missing backlinks, missed files, or risky reorganization suggestions.\n\n"
+        f"Detected corpus kinds: {', '.join(corpus_kinds) if corpus_kinds else 'mixed_notes'}\n\n"
+        f"{_corpus_kind_guidance(corpus_kinds)}\n\n"
         f"SCAN_JSON:\n{json.dumps(scan_prompt, indent=2, sort_keys=True)}\n\n"
         f"ANALYSIS_JSON:\n{json.dumps(analysis.model_dump(), indent=2, sort_keys=True)}\n\n"
         f"GENERATION_JSON:\n{json.dumps(generation.model_dump(), indent=2, sort_keys=True)}"
@@ -288,10 +390,12 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
             key_snippets = [str(snippet) for snippet in snippets if snippet] if isinstance(snippets, list) else []
             links = item.get("links")
             external_links = [str(link) for link in links if link] if isinstance(links, list) else []
+            role = _infer_page_role(item)
             source_pages.append(
                 SourcePagePlan(
                     path=str(item.get("path") or item.get("source_page_title") or f"analysis-item-{idx + 1}"),
                     title=str(item.get("source_page_title") or item.get("title") or f"Source {idx + 1}"),
+                    page_role=role,
                     summary=str(item.get("summary") or item.get("corpus_summary") or ""),
                     platform=str(item.get("platform") or ""),
                     source_kind=source_kind,
@@ -331,6 +435,13 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
         )
         errors.append("analysis output did not match schema; used fallback synthesis")
 
+    analysis_result = AnalysisPlan(
+        **{
+            **analysis_result.model_dump(),
+            "source_page_candidates": [_coerce_source_page_plan(page) for page in analysis_result.source_page_candidates],
+        }
+    )
+
     generation_text = _chat_completions(
         provider,
         base_url,
@@ -362,6 +473,13 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
             confidence=float(summary.get("confidence", analysis_result.confidence) or analysis_result.confidence),
         )
         errors.append("generation output did not match schema; used fallback synthesis")
+
+    generation_result = GenerationPlan(
+        **{
+            **generation_result.model_dump(),
+            "source_pages": [_coerce_source_page_plan(page) for page in generation_result.source_pages],
+        }
+    )
 
     verification_text = _chat_completions(
         provider,

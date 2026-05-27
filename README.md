@@ -84,6 +84,7 @@ Model knobs:
 - `--generation-model` for wiki page writing
 - `--review-model` for verification / contradiction checking
 - Default backend is the local Ollama server on your LAN
+- Real-corpus runs refuse non-192.168.86.* LLM endpoints
 - Google ADK remains the orchestration/observability layer
 
 Useful outputs:

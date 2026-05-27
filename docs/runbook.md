@@ -53,6 +53,42 @@ Optional flags may override env vars:
 - `--use-adk`
 - `--dry-run`
 
+## Mac interactive helper
+
+For the FileAnalyze corpus setup on macOS, the helper now defaults to your real corpus and output roots, so you can run it with no extra parameters:
+
+```bash
+/Users/enkay/dev/wikimaker/wikimakerctl.sh run
+```
+
+It prints the chosen corpus/output/state/telemetry/model settings, asks for confirmation, verifies the local Ollama server and model, and then runs in the foreground with live progress.
+
+Background mode and logs:
+
+```bash
+/Users/enkay/dev/wikimaker/wikimakerctl.sh start
+/Users/enkay/dev/wikimaker/wikimakerctl.sh logs
+/Users/enkay/dev/wikimaker/wikimakerctl.sh logs -f
+/Users/enkay/dev/wikimaker/wikimakerctl.sh stop
+```
+
+To wipe generated wiki output and start over cleanly, use:
+
+```bash
+/Users/enkay/dev/wikimaker/wikimakerctl.sh reset
+/Users/enkay/dev/wikimaker/wikimakerctl.sh fresh
+/Users/enkay/dev/wikimaker/wikimakerctl.sh fresh-start
+```
+
+Reset semantics:
+- only deletes the generated `output/`, `state/`, and `telemetry/` roots under the common `wiki-build/` parent
+- never touches the source corpus root
+- stops a running WikiMaker process first if needed
+- asks for a typed confirmation phrase unless `WIKIMAKER_ASSUME_YES=1` is set
+- leaves `/tmp/wikimaker.log` alone; `start` truncates it on the next run
+
+The helper pins the local Ollama endpoint to `http://192.168.86.11:11434`, uses the `FileAnalyze` conda env, and writes its PID/log to `/tmp`.
+
 ## What the scaffold does
 - loads configuration
 - scans the corpus recursively

@@ -11,6 +11,36 @@ MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 TITLE_RE = re.compile(r"^#\s+(.*)$")
 
 
+def _family_from_text(text: str) -> str:
+    lowered = text.lower()
+    if any(token in lowered for token in ("invoice", "receipt", "bill", "statement", "vendor", "amount due", "subtotal", "total due", "due date")):
+        return "bills_documents"
+    if any(token in lowered for token in ("whatsapp", "chat", "conversation", "thread", "message", "messages", "speaker:", "am", "pm")):
+        return "chats"
+    if any(token in lowered for token in ("project", "roadmap", "milestone", "todo", "task", "issue", "spec", "deliverable", "blocker")):
+        return "project_artifacts"
+    if any(token in lowered for token in ("index", "table of contents", "toc", "ledger", "journal", "changelog", "change log", "log")):
+        return "index_ledger_pages"
+    return "mixed_notes"
+
+
+def _infer_corpus_kind(path: Path, title: str, frontmatter: dict[str, Any], headings: list[str], text: str) -> str:
+    explicit = str(frontmatter.get("corpus_kind") or frontmatter.get("source_kind") or frontmatter.get("kind") or "").strip().lower()
+    if explicit:
+        if any(token in explicit for token in ("invoice", "bill", "receipt", "statement", "document")):
+            return "bills_documents"
+        if any(token in explicit for token in ("whatsapp", "chat", "conversation", "thread", "message")):
+            return "chats"
+        if any(token in explicit for token in ("project", "task", "issue", "roadmap", "spec", "milestone")):
+            return "project_artifacts"
+        if any(token in explicit for token in ("index", "ledger", "journal", "log", "toc")):
+            return "index_ledger_pages"
+        if explicit in {"mixed_notes", "mixed note", "notes", "note"}:
+            return "mixed_notes"
+    family = _family_from_text(" ".join([str(path), title, " ".join(headings), text[:4000]]))
+    return family
+
+
 def _parse_frontmatter(text: str) -> dict[str, Any]:
     if not text.startswith("---\n"):
         return {}
@@ -94,6 +124,8 @@ def scan_markdown_file(path: Path, corpus_root: Path) -> dict[str, Any]:
             source_links.append(value.strip())
 
     stat = path.stat()
+    corpus_kind = _infer_corpus_kind(path, title, frontmatter, headings, text)
+    source_kind = str(frontmatter.get("source_kind") or frontmatter.get("kind") or "").strip()
     return {
         "path": str(path.relative_to(corpus_root)),
         "abs_path": str(path),
@@ -105,7 +137,8 @@ def scan_markdown_file(path: Path, corpus_root: Path) -> dict[str, Any]:
         "headings": headings[:40],
         "source_links": source_links[:40],
         "frontmatter": frontmatter,
-        "source_kind": str(frontmatter.get("source_kind") or frontmatter.get("kind") or "").strip(),
+        "source_kind": source_kind,
+        "corpus_kind": corpus_kind,
         "platform": str(frontmatter.get("platform") or frontmatter.get("provider") or "").strip(),
         "source_url": str(frontmatter.get("source_url") or frontmatter.get("original_url") or frontmatter.get("url") or "").strip(),
         "extracted_at": str(frontmatter.get("extracted_at") or frontmatter.get("date") or frontmatter.get("created") or "").strip(),
@@ -132,4 +165,5 @@ def scan_corpus(corpus_root: Path, *, progress_every: int = 0) -> dict[str, Any]
                 "path": rel_path,
                 "error": f"scan_failed: {exc}",
             }
-    return {"corpus_root": str(corpus_root), "files": files}
+    corpus_kinds = sorted({str(record.get("corpus_kind") or "").strip() for record in files.values() if isinstance(record, dict) and record.get("corpus_kind")})
+    return {"corpus_root": str(corpus_root), "files": files, "corpus_kinds": corpus_kinds}

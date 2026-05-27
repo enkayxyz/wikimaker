@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 import json
 from typing import Any
 
@@ -98,6 +99,8 @@ def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict
             f"- Status: `{_status_for(rel_path, diff)}`",
             f"- Platform: `{record.get('platform') or page.get('platform') or ''}`",
             f"- Corpus kind: `{record.get('source_kind') or page.get('source_kind') or ''}`",
+            f"- Corpus family: `{record.get('corpus_kind') or page.get('corpus_kind') or ''}`",
+            f"- Page role: `{page.get('page_role') or ''}`",
             f"- Extracted at: `{record.get('extracted_at') or page.get('extracted_at') or ''}`",
             f"- Original source URL: `{record.get('source_url') or page.get('source_url') or ''}`",
             "",
@@ -202,11 +205,27 @@ def write_root_index(config: WikiMakerConfig, pipeline: dict[str, Any]) -> Path:
     analysis = pipeline.get("analysis", {})
     generation = pipeline.get("generation", {})
     verification = pipeline.get("verification", {})
+    source_pages = [page for page in generation.get("source_pages", []) if isinstance(page, dict)]
+    primary_pages = [page for page in source_pages if str(page.get("page_role") or "knowledge_page") in {"knowledge_page", "thread_page"}]
+    navigation_pages = [page for page in source_pages if str(page.get("page_role") or "") in {"index_page", "ledger_page", "duplicate_page", "contradiction_page"}]
+    role_counts: dict[str, int] = {}
+    for page in source_pages:
+        role = str(page.get("page_role") or "knowledge_page").strip() or "knowledge_page"
+        role_counts[role] = role_counts.get(role, 0) + 1
     path = config.output_root / "_root_index.md"
     lines = [
         "# WikiMaker Root Index",
         "",
         generation.get("root_index_summary") or analysis.get("corpus_summary") or "WikiMaker output index.",
+        "",
+        "## Jump table",
+        "- [Navigation](#navigation)",
+        "- [Corpus kinds](#corpus-kinds)",
+        "- [Page roles](#page-roles)",
+        "- [Source pages](#source-pages)",
+        "- [Wiki sets](#wiki-sets)",
+        "- [Verification](#verification)",
+        "- [Reorg suggestions](#reorg-suggestions)",
         "",
         "## Navigation",
         "- [_Dashboard](_dashboard.md)",
@@ -222,6 +241,48 @@ def write_root_index(config: WikiMakerConfig, pipeline: dict[str, Any]) -> Path:
         lines.extend(f"- {item}" for item in corpus_kinds)
     else:
         lines.append("- _Unknown_")
+    lines.extend([
+        "",
+        "## Page roles",
+        f"- Primary source pages: {len(primary_pages)}",
+        f"- Navigation pages: {len(navigation_pages)}",
+    ])
+    for role in sorted(role_counts):
+        lines.append(f"- {role}: {role_counts[role]}")
+    lines.extend([
+        "",
+        "## Source pages",
+        "| Title | Provenance | Source markdown | Stub | External/source link |",
+        "| --- | --- | --- | --- | --- |",
+    ])
+    if source_pages:
+        provenance_rank = {"knowledge_page": 0, "thread_page": 1, "index_page": 2, "ledger_page": 3, "duplicate_page": 4, "contradiction_page": 5}
+        for page in sorted(source_pages, key=lambda item: (provenance_rank.get(str(item.get("page_role") or ""), 99), str(item.get("title") or ""))):
+            rel_path = str(page.get("path") or "").strip()
+            title = str(page.get("title") or Path(rel_path).stem or rel_path)
+            role = str(page.get("page_role") or "knowledge_page").strip() or "knowledge_page"
+            source_kind = str(page.get("source_kind") or "").strip()
+            platform = str(page.get("platform") or "").strip()
+            status = str(page.get("status") or "").strip()
+            provenance_bits = [role.replace("_", " ").title()]
+            if source_kind:
+                provenance_bits.append(source_kind.replace("_", " "))
+            if platform:
+                provenance_bits.append(platform)
+            if status:
+                provenance_bits.append(status)
+            provenance = ", ".join(bit for bit in provenance_bits if bit)
+            stub_name = _source_stub_name(rel_path) if rel_path else ""
+            stub_link = f"[source stub](sources/{stub_name})" if stub_name else "_None_"
+            source_markdown = f"`{rel_path}`" if rel_path else "_Unknown_"
+            source_link = str(page.get("source_url") or page.get("external_link") or page.get("original_source_url") or "").strip()
+            if source_link:
+                source_link_cell = f"[{source_link}]({source_link})"
+            else:
+                source_link_cell = "_None_"
+            lines.append(f"| {title} | {provenance} | {source_markdown} | {stub_link} | {source_link_cell} |")
+    else:
+        lines.append("| _None_ | _None_ | _None_ | _None_ | _None_ |")
     lines.extend([
         "",
         "## Wiki sets",
@@ -358,7 +419,19 @@ def write_folder_docs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[
 
 
 def _source_stub_name(rel_path: str) -> str:
-    return "__".join(part.replace(":", "_").replace("?", "_").replace("*", "_").replace("/", "_") for part in Path(rel_path).parts)
+    parts = [part.replace(":", "_").replace("?", "_").replace("*", "_").replace("/", "_") for part in Path(rel_path).parts]
+    candidate = "__".join(parts)
+    if len(candidate) <= 160:
+        return candidate
+    digest = hashlib.sha1(rel_path.encode("utf-8")).hexdigest()[:12]
+    if len(parts) == 1:
+        prefix = [parts[0][:48]]
+    elif len(parts) == 2:
+        prefix = [parts[0][:24], parts[1][:80]]
+    else:
+        prefix = [parts[0][:24], parts[1][:24], parts[-1][:80]]
+    shortened = "__".join(prefix + [digest])
+    return shortened[:160]
 
 
 def _status_for(rel_path: str, diff: dict[str, list[str]]) -> str:
