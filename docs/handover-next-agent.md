@@ -136,6 +136,6 @@ Recommended next steps for the next agent:
 - `docs/plans/wiki-os-next-stage-implementation-plan.md`
 - `skill/SKILL.md`
 
-## 10) One-line handoff
+## 10) Prompt for the next agent
 
-WikiMaker is working end-to-end as a local provenance-first wiki compiler, but the next agent should focus on making the browser calmer and making the AI synthesis much better across corpus types while preserving the read-only/provenance boundary.
+Read the WikiMaker repository handoff notes, then take over from the current state. Focus on making WikiMaker feel more like wiki-os in the good ways: cleaner home/navigation, better page relationships, stronger taxonomy discipline, and a calmer browsing experience. Keep WikiMaker provenance-first and local-first. Do not merge the wiki-os codebase; only borrow the useful UX and discovery ideas. Improve the AI synthesis across corpus types, especially page-role classification, backlinks, related pages, and the separation between substantive content pages and generated navigation pages. Preserve the read-only source boundary, explicit provenance, and duplicate/evolution/contradiction visibility. Make a short plan, implement the highest-impact changes in small steps, and verify with tests as you go.
