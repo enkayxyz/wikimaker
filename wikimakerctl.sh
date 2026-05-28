@@ -14,6 +14,19 @@ PID_FILE="/tmp/wikimaker.pid"
 LOG_FILE="/tmp/wikimaker.log"
 RESET_CONFIRMATION_PHRASE="RESET WIKIMAKER"
 
+load_env_file() {
+  local env_file="$1"
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+}
+
+load_env_file "$REPO_ROOT/.env"
+load_env_file "$HOME/.wikimaker/.env"
+
 cmd="${1:-}"
 shift || true
 
@@ -220,7 +233,7 @@ preflight_run() {
       --timeout 60 \
       --prompt "Return exactly one word: OK."
   else
-    echo "Preflight: skipping optional connectivity check. Set WIKIMAKER_CONNECTIVITY_CHECK_SCRIPT to enable it."
+    echo "Preflight: skipping optional external connectivity script. The Python run will validate the configured model endpoint before scanning."
   fi
 }
 

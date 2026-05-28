@@ -17,7 +17,7 @@ if str(CODE_DIR) not in sys.path:
 from wikimaker_config import WikiMakerConfig
 from wikimaker_discovery import build_discovery_views, write_discovery_views, _source_stub_name
 from wikimaker_browser import write_browser_frontend
-from wikimaker_openai import SourcePagePlan, AnalysisPlan, GenerationPlan, _require_local_llm_config, _analysis_prompt, _generation_prompt, _compact_scan_for_prompt, _verification_prompt
+from wikimaker_openai import SourcePagePlan, AnalysisPlan, GenerationPlan, preflight_llm_endpoint, _require_local_llm_config, _analysis_prompt, _generation_prompt, _compact_scan_for_prompt, _verification_prompt
 from wikimaker_privacy import classify_endpoint_privacy
 from wikimaker_profiles import apply_prompt_profiles
 from wikimaker_health import build_wiki_health, write_health_report
@@ -54,6 +54,21 @@ class WikiMakerSmokeTests(unittest.TestCase):
         )
         self.assertEqual(provider, "ollama")
         self.assertEqual(base_url, "https://api.example.com/v1")
+
+    def test_llm_preflight_reports_connection_failure_with_endpoint_context(self) -> None:
+        config = {
+            "provider": "ollama",
+            "openai_base_url": "http://127.0.0.1:11434",
+            "analysis_model": "gemma4:e4b-mlx",
+            "generation_model": "gemma4:e4b-mlx",
+            "review_model": "gemma4:e4b-mlx",
+        }
+        with patch(
+            "wikimaker_openai._chat_completions",
+            side_effect=RuntimeError("OpenAI-compatible request failed for http://127.0.0.1:11434/api/chat: <urlopen error [Errno 61] Connection refused>"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Unable to reach local LLM endpoint 'http://127.0.0.1:11434' while checking analysis model 'gemma4:e4b-mlx'"):
+                preflight_llm_endpoint(config)
 
     def test_scanner_extracts_title_headings_and_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -671,7 +686,7 @@ Journal entry and reflection about priorities.
                     "verification": {"approved": True, "findings": [], "changes_requested": [], "confidence": 0.8},
                 }
 
-            with patch("wikimaker_runner.run_pipeline", side_effect=fake_pipeline):
+            with patch("wikimaker_runner.preflight_llm_endpoint", return_value={"provider": "ollama", "base_url": "http://127.0.0.1:11434", "checked_models": []}), patch("wikimaker_runner.run_pipeline", side_effect=fake_pipeline):
                 result = run(config)
 
             self.assertEqual(result["scan"]["total_files"], 3)

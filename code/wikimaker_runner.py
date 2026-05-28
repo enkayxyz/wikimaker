@@ -29,7 +29,7 @@ except Exception:  # pragma: no cover
 
     trace = _NoopTrace()  # type: ignore[assignment]
 
-from wikimaker_openai import GenerationPlan, AnalysisPlan, VerificationPlan, run_pipeline
+from wikimaker_openai import GenerationPlan, AnalysisPlan, VerificationPlan, preflight_llm_endpoint, run_pipeline
 from wikimaker_config import WikiMakerConfig
 from wikimaker_discovery import write_discovery_views, _source_stub_name, _wiki_set_dir_name
 from wikimaker_browser import write_browser_frontend
@@ -956,6 +956,9 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
         root_span.set_attribute("wikimaker.use_adk", bool(config.use_adk))
         root_span.set_attribute("wikimaker.enable_adk_eval", bool(config.enable_adk_eval))
         root_span.set_attribute("wikimaker.dry_run", bool(config.dry_run))
+
+        with tracer.start_as_current_span("wikimaker.preflight"):
+            preflight_llm_endpoint(config.as_dict())
 
         with tracer.start_as_current_span("wikimaker.scan"):
             previous = load_snapshot(config.state_root)

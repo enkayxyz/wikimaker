@@ -88,7 +88,7 @@ For the default macOS corpus setup, the helper points at your configured corpus 
 <repo-root>/wikimakerctl.sh fresh
 ```
 
-`fresh` is the canonical full rebuild command for your real corpus. It resets generated output/state/telemetry only, keeps the source extracts read-only, prints the chosen corpus/output/state/telemetry/model settings, asks for confirmation, verifies the local Ollama server and model, and then runs in the foreground with live progress.
+`fresh` is the canonical full rebuild command for your real corpus. It resets generated output/state/telemetry only, keeps the source extracts read-only, prints the chosen corpus/output/state/telemetry/model settings, asks for confirmation, verifies the local Ollama server and model before scanning, and then runs in the foreground with live progress.
 
 After a successful build, inspect:
 - `output/_privacy.md`

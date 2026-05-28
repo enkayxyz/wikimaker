@@ -284,7 +284,70 @@ def _require_local_llm_config(config: dict[str, Any]) -> tuple[str, str, str]:
     return provider, base_url, api_key
 
 
-def _chat_completions(provider: str, base_url: str, api_key: str, model: str, messages: list[dict[str, Any]], *, temperature: float = 0.2) -> str:
+def _configured_model_pairs(config: dict[str, Any]) -> list[tuple[str, str]]:
+    analysis_model = str(config.get("analysis_model") or "").strip()
+    generation_model = str(config.get("generation_model") or analysis_model).strip()
+    review_model = str(config.get("review_model") or analysis_model).strip()
+    if not analysis_model:
+        raise RuntimeError("Missing WIKIMAKER_ANALYSIS_MODEL in .env or the environment.")
+    if not generation_model:
+        raise RuntimeError("Missing WIKIMAKER_GENERATION_MODEL in .env or the environment.")
+    if not review_model:
+        raise RuntimeError("Missing WIKIMAKER_REVIEW_MODEL in .env or the environment.")
+
+    model_pairs: list[tuple[str, str]] = [
+        ("analysis", analysis_model),
+        ("generation", generation_model),
+        ("review", review_model),
+    ]
+    if _boolish(config.get("enable_quality_judge")):
+        quality_judge_model = str(
+            config.get("quality_judge_model")
+            or review_model
+            or analysis_model
+        ).strip()
+        if not quality_judge_model:
+            raise RuntimeError("Missing WIKIMAKER_QUALITY_JUDGE_MODEL in .env or the environment.")
+        model_pairs.append(("quality_judge", quality_judge_model))
+    return list(dict.fromkeys(model_pairs))
+
+
+def preflight_llm_endpoint(config: dict[str, Any], *, timeout: int = 15) -> dict[str, Any]:
+    provider, base_url, api_key = _require_local_llm_config(config)
+    checked_models: list[dict[str, str]] = []
+    for role, model in _configured_model_pairs(config):
+        try:
+            _chat_completions(
+                provider,
+                base_url,
+                api_key,
+                model,
+                [
+                    {"role": "system", "content": "You are WikiMaker's connection preflight."},
+                    {"role": "user", "content": "Return exactly one word: OK."},
+                ],
+                temperature=0.0,
+                http_timeout=timeout,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Unable to reach local LLM endpoint '{base_url}' while checking {role} model '{model}'. "
+                "Start Ollama, verify the configured model names, and retry."
+            ) from exc
+        checked_models.append({"role": role, "model": model})
+    return {"provider": provider, "base_url": base_url, "checked_models": checked_models}
+
+
+def _chat_completions(
+    provider: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    *,
+    temperature: float = 0.2,
+    http_timeout: int | None = None,
+) -> str:
     if provider == "ollama":
         payload = {
             "model": model,
@@ -311,15 +374,15 @@ def _chat_completions(provider: str, base_url: str, api_key: str, model: str, me
         headers=headers,
         method="POST",
     )
-    http_timeout = 600 if provider == "ollama" else 180
+    http_timeout = http_timeout if http_timeout is not None else (600 if provider == "ollama" else 180)
     try:
         with urlopen(request, timeout=http_timeout) as response:
             raw = response.read().decode("utf-8")
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else str(exc)
-        raise RuntimeError(f"OpenAI-compatible request failed: HTTP {exc.code}: {detail}") from exc
+        raise RuntimeError(f"OpenAI-compatible request failed for {endpoint}: HTTP {exc.code}: {detail}") from exc
     except URLError as exc:
-        raise RuntimeError(f"OpenAI-compatible request failed: {exc}") from exc
+        raise RuntimeError(f"OpenAI-compatible request failed for {endpoint}: {exc}") from exc
 
     data = json.loads(raw)
     if provider == "ollama":
@@ -402,15 +465,11 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
 
     provider, base_url, api_key = _require_local_llm_config(config)
     sample_files = int(config.get("sample_files", 50) or 50)
-    analysis_model = str(config.get("analysis_model") or "").strip()
-    generation_model = str(config.get("generation_model") or analysis_model).strip()
-    review_model = str(config.get("review_model") or analysis_model).strip()
-    if not analysis_model:
-        raise RuntimeError("Missing WIKIMAKER_ANALYSIS_MODEL in .env or the environment.")
-    if not generation_model:
-        raise RuntimeError("Missing WIKIMAKER_GENERATION_MODEL in .env or the environment.")
-    if not review_model:
-        raise RuntimeError("Missing WIKIMAKER_REVIEW_MODEL in .env or the environment.")
+    model_pairs = _configured_model_pairs(config)
+    model_lookup = dict(model_pairs)
+    analysis_model = model_lookup["analysis"]
+    generation_model = model_lookup["generation"]
+    review_model = model_lookup["review"]
 
     scan_prompt = _compact_scan_for_prompt(scan, diff, limit=sample_files)
     errors: list[str] = []
