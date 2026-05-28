@@ -64,6 +64,7 @@ print_status() {
   echo "Artifacts:"
   for artifact in \
     "$output_root/_privacy.md" \
+    "$output_root/_llm_quality.md" \
     "$output_root/_health.md" \
     "$output_root/browser/index.html" \
     "$output_root/browser/data.json" \

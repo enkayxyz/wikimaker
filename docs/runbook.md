@@ -11,6 +11,9 @@ Put these in `.env`:
 - `WIKIMAKER_LLM_API_STYLE` — `ollama` for the current scaffold
 - `WIKIMAKER_ANALYSIS_MODEL` — model used for stage 1 source-page generation (recommended: your local Gemma 4 E4B MLX model)
 - `WIKIMAKER_REVIEW_MODEL` — model used for stage 3 verification
+- `WIKIMAKER_SYNTHESIS_MODE` — default `llm_only`; do not synthesize links from scan heuristics
+- `WIKIMAKER_ENABLE_QUALITY_JUDGE` — `1` to run an aggregate-only quality judge after generation
+- `WIKIMAKER_QUALITY_JUDGE_MODEL` — local model for quality judging; defaults to review model
 - The local Ollama endpoint runs on your LAN, so the code can talk to it without any external LLM dependency
 
 - `WIKIMAKER_USE_ADK` — retained for orchestration settings
@@ -32,6 +35,8 @@ OPENAI_BASE_URL=http://192.168.86.11:11434
 WIKIMAKER_ANALYSIS_MODEL=gemma4:e4b-mlx
 WIKIMAKER_GENERATION_MODEL=gemma4:e4b-mlx
 WIKIMAKER_REVIEW_MODEL=gemma4:e4b-mlx
+WIKIMAKER_SYNTHESIS_MODE=llm_only
+WIKIMAKER_ENABLE_QUALITY_JUDGE=1
 ```
 
 Use your local Ollama models for the stage 1 source-page pass, stage 2 commonality pass, and stage 3 verification pass.
@@ -64,6 +69,9 @@ Optional flags may override env vars:
 - `--dry-run`
 - `--allow-remote-llm`
 - `--prompt-profile`
+- `--synthesis-mode`
+- `--enable-quality-judge` / `--no-enable-quality-judge`
+- `--quality-judge-model`
 
 ## Mac interactive helper
 
@@ -77,6 +85,7 @@ For the default macOS corpus setup, the helper points at your configured corpus 
 
 After a successful build, inspect:
 - `output/_privacy.md`
+- `output/_llm_quality.md`
 - `output/_health.md`
 - `output/browser/index.html`
 - `output/browser/data.json`
@@ -107,7 +116,7 @@ Reset semantics:
 - asks for a typed confirmation phrase unless `WIKIMAKER_ASSUME_YES=1` is set
 - leaves `/tmp/wikimaker.log` alone; `start` truncates it on the next run
 
-The helper pins the local Ollama endpoint to `http://192.168.86.11:11434`, uses the `wikimaker` conda env by default, and writes its PID/log to `/tmp`. Override with `WIKIMAKER_CONDA_ENV` only for debugging.
+The helper pins the local Ollama endpoint to `http://192.168.86.11:11434`, uses the `wikimaker` conda env by default, and writes its PID/log to `/tmp`. It is intentionally Mac/Hermes-specific and hardcodes `/Users/enkay` defaults. Override with `WIKIMAKER_*` environment variables or use the Python CLI with explicit roots for other machines.
 
 Corpus families currently expected:
 - WhatsApp extracts
@@ -130,5 +139,7 @@ Planned corpus families already have built-in prompt profiles: contacts, calenda
 - classifies model endpoint privacy before LLM use
 - applies automatic corpus-kind detection plus optional local prompt-profile overrides
 - asks the local LLM for source-page plans, wiki-set synthesis, and verification
+- keeps wiki synthesis LLM-only by default; scan heuristics should not invent semantic links
+- writes `_llm_quality.md`, which judges only aggregate counts and never sends source text, filenames, titles, or snippets to the judge model
 - writes source summaries, wiki sets, topic/entity pages, backlinks, graph data, privacy status, health checks, browser data, telemetry, and state
 - preserves generated output separately from the source corpus

@@ -197,6 +197,7 @@ def _browser_payload(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[s
             "graph": "../_graph.json",
             "privacy": "../_privacy.md",
             "health": "../_health.md",
+            "llm_quality": "../_llm_quality.md",
             "browser_data": "data.json",
         },
     }
@@ -420,6 +421,7 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
         <a href="../_search.md">Search</a>
         <a href="../_graph.json">Graph JSON</a>
         <a href="../_privacy.md">Privacy</a>
+        <a href="../_llm_quality.md">LLM quality</a>
         <a href="../_health.md">Health</a>
       </div>
     </div>

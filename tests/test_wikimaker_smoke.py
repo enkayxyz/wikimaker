@@ -606,11 +606,13 @@ Journal entry and reflection about priorities.
                 analysis_model="mock-analysis",
                 generation_model="mock-generation",
                 review_model="mock-review",
+                enable_quality_judge=False,
             )
 
             def fake_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config_dict: dict[str, Any]) -> dict[str, Any]:
                 self.assertIn("prompt_profile", scan["files"]["chats/team.md"])
                 self.assertIn("prompt_profile", scan["files"]["bills/invoice.md"])
+                self.assertIn("prompt_profile", scan["files"]["ai/assistant.md"])
                 return {
                     "llm_used": True,
                     "errors": [],
@@ -677,17 +679,18 @@ Journal entry and reflection about priorities.
             self.assertTrue((output_root / "_health.md").exists())
             self.assertTrue((output_root / "browser" / "index.html").exists())
             self.assertTrue((output_root / "browser" / "data.json").exists())
+            self.assertTrue((output_root / "_llm_quality.md").exists())
             self.assertTrue((output_root / "wiki-sets" / "_topics" / "launch-plan.md").exists())
             self.assertTrue((output_root / "wiki-sets" / "_entities" / "acme-corp.md").exists())
             self.assertTrue((output_root / "sources" / "chats__team.md").exists())
-            self.assertTrue((output_root / "sources" / "ai__assistant.md").exists())
             self.assertTrue((state_root / "corpus_snapshot.json").exists())
             html = (output_root / "browser" / "index.html").read_text(encoding="utf-8")
             self.assertNotIn("fetch(", html)
             self.assertNotIn("radial-gradient", html)
             self.assertNotIn("hero-side card", html)
             browser_data = json.loads((output_root / "browser" / "data.json").read_text(encoding="utf-8"))
-            self.assertEqual(browser_data["counts"]["semantic_source_pages"], 3)
+            self.assertEqual(browser_data["counts"]["semantic_source_pages"], 2)
+            self.assertEqual(browser_data["counts"]["library_pages"], 3)
             self.assertGreater(browser_data["counts"]["edges"], 0)
             self.assertEqual(browser_data["privacy"]["model_endpoint"]["classification"], "lan")
             self.assertEqual(browser_data["privacy"]["browser"]["classification"], "static-local")
@@ -697,7 +700,11 @@ Journal entry and reflection about priorities.
             self.assertIn("## Linked from", source_text)
             search_text = (output_root / "_search.md").read_text(encoding="utf-8")
             self.assertIn("AI Conversation", search_text)
-            self.assertRegex(search_text, r"\| `ai/assistant\.md` \| added \| [1-9]")
+            quality_text = (output_root / "_llm_quality.md").read_text(encoding="utf-8")
+            self.assertIn("aggregate counts only", quality_text)
+            self.assertIn("LLM generated source-page coverage is below 80%", quality_text)
+            self.assertNotIn("ai/assistant.md", quality_text)
+            self.assertNotIn("Team Chat", quality_text)
 
     def test_source_stub_names_are_sanitized_for_weird_paths(self) -> None:
 

@@ -379,6 +379,7 @@ def write_discovery_views(config: WikiMakerConfig, scan: dict[str, Any], diff: d
         "- [_Browser UI](browser/index.html)",
         "- [_Graph data](_graph.json)",
         "- [_Privacy boundary](_privacy.md)",
+        "- [_LLM quality](_llm_quality.md)",
         "- [_Health check](_health.md)",
 
 

@@ -37,6 +37,7 @@ from wikimaker_health import build_wiki_health, write_health_report
 from wikimaker_observability import configure_adk_tracing, run_adk_self_eval
 from wikimaker_privacy import browser_network_posture, classify_endpoint_privacy
 from wikimaker_profiles import apply_prompt_profiles
+from wikimaker_quality import build_quality_report, write_quality_report
 from wikimaker_scanner import scan_corpus
 from wikimaker_state import diff_snapshots, load_snapshot, save_snapshot
 from wikimaker_telemetry import build_telemetry, write_telemetry
@@ -457,6 +458,7 @@ def write_root_index(config: WikiMakerConfig, pipeline: dict[str, Any]) -> Path:
         "- [_Browser UI](browser/index.html)",
         "- [_Graph data](_graph.json)",
         "- [_Privacy boundary](_privacy.md)",
+        "- [_LLM quality](_llm_quality.md)",
         "- [_Health check](_health.md)",
         "",
         "## Corpus kinds",
@@ -769,7 +771,7 @@ def _resolve_markdown_target(rel_path: str, target: str, existing_paths: set[str
 
 
 def complete_pipeline_from_scan(scan: dict[str, Any], pipeline: dict[str, Any]) -> dict[str, Any]:
-    """Guarantee every scanned source has a generated page and basic wiki links."""
+    """Optional coverage fallback. Not used in default LLM-only synthesis mode."""
 
     files = scan.get("files", {})
     generation = dict(pipeline.get("generation") or {})
@@ -964,7 +966,8 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
 
         with tracer.start_as_current_span("wikimaker.pipeline"):
             pipeline = run_pipeline(scan, diff, config.as_dict())
-            pipeline = complete_pipeline_from_scan(scan, pipeline)
+            if config.synthesis_mode == "coverage_fallback":
+                pipeline = complete_pipeline_from_scan(scan, pipeline)
             pipeline["privacy"] = endpoint_privacy
 
         with tracer.start_as_current_span("wikimaker.telemetry"):
@@ -975,6 +978,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 "analysis_confidence": pipeline.get("analysis", {}).get("confidence"),
                 "generation_confidence": pipeline.get("generation", {}).get("confidence"),
                 "verification_confidence": pipeline.get("verification", {}).get("confidence"),
+                "synthesis_mode": config.synthesis_mode,
             }
             telemetry["privacy"] = endpoint_privacy
             telemetry["prompt_profiles"] = scan.get("prompt_profiles", {})
@@ -996,6 +1000,8 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
             knowledge_page_paths: list[Path] = []
             privacy_path = None
             health_path = None
+            quality_path = None
+            quality = {}
         else:
             with tracer.start_as_current_span("wikimaker.publish"):
                 report_path = write_change_report(config, scan, diff, pipeline)
@@ -1011,6 +1017,8 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 graph_data = json.loads(discovery_paths["graph"].read_text(encoding="utf-8")) if discovery_paths.get("graph") else {}
                 health = build_wiki_health(scan, pipeline, graph_data)
                 health_path = write_health_report(config.output_root, health)
+                quality = build_quality_report(scan, pipeline, graph_data, config.as_dict())
+                quality_path = write_quality_report(config.output_root, quality)
                 snapshot_path = save_snapshot(config.state_root, current)
 
         if config.enable_adk_eval:
@@ -1027,6 +1035,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
             }
 
         telemetry["observability"]["evaluation"] = eval_result
+        telemetry["llm_quality"] = quality
         telemetry_path = write_telemetry(config.telemetry_root, telemetry)
 
         result = {
@@ -1054,6 +1063,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 "browser": str(discovery_paths.get("browser", "")) if discovery_paths else "",
                 "privacy": str(privacy_path) if privacy_path else "",
                 "health": str(health_path) if health_path else "",
+                "llm_quality": str(quality_path) if quality_path else "",
                 "adk_trace_db": config.adk_trace_db,
                 "adk_eval_dir": config.adk_eval_dir,
             },

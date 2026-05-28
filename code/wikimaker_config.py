@@ -31,6 +31,9 @@ class WikiMakerConfig:
     dry_run: bool = False
     allow_remote_llm: bool = False
     prompt_profile_path: str = ""
+    synthesis_mode: str = "llm_only"
+    enable_quality_judge: bool = True
+    quality_judge_model: str = ""
 
     @classmethod
     def from_env_and_args(cls, **overrides: Any) -> "WikiMakerConfig":
@@ -68,6 +71,11 @@ class WikiMakerConfig:
         dry_run = _boolish(pick("WIKIMAKER_DRY_RUN", pick("dry_run", "0")))
         allow_remote_llm = _boolish(pick("WIKIMAKER_ALLOW_REMOTE_LLM", pick("allow_remote_llm", "0")))
         prompt_profile_path = pick("WIKIMAKER_PROMPT_PROFILE", pick("prompt_profile_path", ""))
+        synthesis_mode = pick("WIKIMAKER_SYNTHESIS_MODE", pick("synthesis_mode", "llm_only")).strip() or "llm_only"
+        if synthesis_mode not in {"llm_only", "coverage_fallback"}:
+            raise ValueError("WIKIMAKER_SYNTHESIS_MODE must be llm_only or coverage_fallback.")
+        enable_quality_judge = _boolish(pick("WIKIMAKER_ENABLE_QUALITY_JUDGE", pick("enable_quality_judge", "1")))
+        quality_judge_model = pick("WIKIMAKER_QUALITY_JUDGE_MODEL", pick("quality_judge_model", review_model))
 
         return cls(
             corpus_root=corpus_root,
@@ -91,6 +99,9 @@ class WikiMakerConfig:
             dry_run=dry_run,
             allow_remote_llm=allow_remote_llm,
             prompt_profile_path=prompt_profile_path,
+            synthesis_mode=synthesis_mode,
+            enable_quality_judge=enable_quality_judge,
+            quality_judge_model=quality_judge_model,
         )
 
     def as_dict(self) -> dict[str, Any]:

@@ -29,6 +29,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=None, help="Run without future write actions")
     parser.add_argument("--allow-remote-llm", action=argparse.BooleanOptionalAction, default=None, help="Allow remote model endpoints after privacy classification")
     parser.add_argument("--prompt-profile", help="Optional wikimaker prompt profile JSON/YAML path")
+    parser.add_argument("--synthesis-mode", choices=["llm_only", "coverage_fallback"], help="Use LLM-only wiki synthesis, or opt into scan coverage fallback")
+    parser.add_argument("--enable-quality-judge", action=argparse.BooleanOptionalAction, default=None, help="Run a redacted aggregate quality judge after synthesis")
+    parser.add_argument("--quality-judge-model", help="Local model used for the redacted aggregate quality judge")
     return parser.parse_args(argv)
 
 
@@ -54,6 +57,9 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             allow_remote_llm=args.allow_remote_llm,
             prompt_profile_path=args.prompt_profile,
+            synthesis_mode=args.synthesis_mode,
+            enable_quality_judge=args.enable_quality_judge,
+            quality_judge_model=args.quality_judge_model,
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -89,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"- graph: {result['paths'].get('graph', '')}")
     print(f"- browser: {result['paths'].get('browser', '')}")
     print(f"- privacy: {result['paths'].get('privacy', '')}")
+    print(f"- LLM quality: {result['paths'].get('llm_quality', '')}")
     print(f"- health: {result['paths'].get('health', '')}")
     print(f"- telemetry: {result['paths']['telemetry']}")
     return 0

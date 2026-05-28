@@ -39,11 +39,12 @@ Current stack:
 
 Important implementation facts:
 - ADK import namespace: `google.adk`
-- working package line in this environment: `google-adk==2.0.0b1`
+- pinned package line in this environment: `google-adk==2.1.0`
 - local inference endpoint: `http://192.168.86.11:11434`
 - Python runtime: 3.11 or newer
 - real-corpus runs are intentionally local-only
 - there is no deterministic non-AI fallback wiki-generation path
+- default synthesis mode is `llm_only`; scan data may make sources visible, but wiki links/sets are considered valid only when produced by the LLM
 
 Main code paths:
 - `code/wikimaker_scanner.py`
@@ -88,6 +89,9 @@ Suggested environment variables:
 - `WIKIMAKER_ADK_EVAL_DIR`
 - `WIKIMAKER_ALLOW_REMOTE_LLM`
 - `WIKIMAKER_PROMPT_PROFILE`
+- `WIKIMAKER_SYNTHESIS_MODE` — default `llm_only`; `coverage_fallback` is an explicit experiment
+- `WIKIMAKER_ENABLE_QUALITY_JUDGE`
+- `WIKIMAKER_QUALITY_JUDGE_MODEL`
 - `OPENAI_BASE_URL`
 - `OPENAI_API_KEY` or `OSAURUS_API_KEY` if using an OpenAI-compatible backend instead of plain Ollama
 
@@ -141,6 +145,8 @@ Mac helper:
 
 For the real default corpus, `wikimakerctl.sh fresh` is the canonical full rebuild path: it resets only generated output/state/telemetry, never the source extracts, then runs in the foreground.
 
+`wikimakerctl.sh` is intentionally tuned for the primary macOS/Hermes test setup and hardcodes `/Users/enkay` defaults. For another machine, either set the `WIKIMAKER_*` environment variables or call `conda run -n wikimaker python wikimaker.py ...` with explicit roots.
+
 ## What the outputs contain
 
 Common output paths:
@@ -151,6 +157,7 @@ Common output paths:
 - `_search.md` — jump table for source pages and wiki sets
 - `_graph.json` — graph data for future UI layers
 - `_privacy.md` — model endpoint and browser network boundary report
+- `_llm_quality.md` — aggregate-only LLM output quality report
 - `_health.md` — wiki lint/health findings
 - `browser/index.html` — local browser frontend
 - `sources/` — one source-summary page per Markdown file

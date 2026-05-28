@@ -89,7 +89,7 @@ For the v0001 scaffold, the preferred orchestration stack is:
 Important implementation details:
 - the PyPI package is `google-adk`
 - the import namespace is `google.adk`
-- in this environment, the working package line is `google-adk==2.0.0b1`
+- in this environment, pin the package line as `google-adk==2.1.0`
 - root ADK `LlmAgent` instances must use `mode="chat"` (not `single_turn`)
 - do not hard-bind logic to Google-only models
 - keep provider selection configurable via env vars or config
@@ -97,6 +97,7 @@ Important implementation details:
 - enable observability with `google.adk.telemetry.setup.maybe_set_otel_providers(...)` and a local `SqliteSpanExporter` if you want persistent traces
 - keep the runtime hard-failing if the local model server or key is missing
 - do not retain a deterministic fallback wiki-generation path
+- keep default synthesis `llm_only`; scan data may support provenance/library visibility but must not invent semantic links
 
 Recommended env vars:
 - `WIKIMAKER_CORPUS_ROOT`
@@ -141,7 +142,9 @@ Every run should make the model boundary visible:
 - `lan` means private-network endpoint
 - `remote` means DNS/public internet risk
 
-Remote endpoints must be refused unless `WIKIMAKER_ALLOW_REMOTE_LLM=1` or `--allow-remote-llm` is set. The generated output should include `_privacy.md`, and the browser UI should expose the model endpoint classification and browser network posture.
+Remote endpoints must be refused unless `WIKIMAKER_ALLOW_REMOTE_LLM=1` or `--allow-remote-llm` is set. The generated output should include `_privacy.md` and `_llm_quality.md`, and the browser UI should expose the model endpoint classification, browser network posture, and quality report link.
+
+The LLM quality judge must receive aggregate metrics only: no source text, filenames, titles, snippets, or personal data.
 
 The generated browser should stay static-first: embedded/local JSON, local links, no remote fonts, no image lookup, no analytics, no hidden fetches.
 
@@ -186,6 +189,7 @@ project/
       _root_index.md
       _change_report.md
       _privacy.md
+      _llm_quality.md
       _health.md
       raw-links/             # optional indexes into the raw corpus
       sources/               # one compact source-summary page per source document/chat
@@ -298,6 +302,7 @@ Generate:
 - relationship hubs when useful
 - backlinks / related pages sections
 - privacy report (`_privacy.md`)
+- aggregate-only LLM quality report (`_llm_quality.md`)
 - health report (`_health.md`)
 
 Every source-summary page should include:

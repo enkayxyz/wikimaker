@@ -202,7 +202,10 @@ A v0001 implementation is acceptable if it can:
 - Every run should classify the model endpoint as local, LAN, or remote.
 - Remote model endpoints must require explicit opt-in.
 - Generated browser output must not include remote fonts, image lookups, analytics, or hidden fetches.
-- The generated output should include `_privacy.md` and `_health.md`.
+- The generated output should include `_privacy.md`, `_llm_quality.md`, and `_health.md`.
+- Default synthesis must be LLM-only. Scan-derived heuristics may support provenance and library visibility, but must not be presented as LLM-analyzed semantic links.
+- Quality judging must use aggregate metrics only: no source text, filenames, titles, snippets, or personal data.
+- Bad LLM output should be flagged when coverage, schema validity, graph edge density, or verification confidence is weak.
 
 ## Prompt profile requirements
 
