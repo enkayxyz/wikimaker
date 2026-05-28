@@ -2,10 +2,10 @@
 name: wikimaker
 description: Compile a recursive folder tree of Markdown source documents into one or more evolving wiki sets with folder-level gist.md and ledger.md maintenance.
 version: 0.1.0
-author: Hermes Agent
+author: local agent Agent
 license: MIT
 metadata:
-  hermes:
+ .wikimaker:
     tags: [wiki, knowledge-base, markdown, corpus-analysis, linking, reorganization]
 ---
 
@@ -16,7 +16,7 @@ Use this skill when the user provides a folder tree containing Markdown files. T
 This is a compiler and curator workflow, not an extraction workflow.
 
 See also:
-- `/Users/enkay/dev/wikimaker/docs/wiki-os-borrowing-plan.md` for the next-release borrow / do-not-borrow requirements and success criteria.
+- `<repo-root>/docs/wiki-os-borrowing-plan.md` for the next-release borrow / do-not-borrow requirements and success criteria.
 
 ## Core product behavior
 
@@ -125,7 +125,7 @@ Local model defaults that worked best in this flow:
 Use the dedicated `wikimaker` conda environment, not the extraction utility environment:
 
 ```bash
-cd /Users/enkay/dev/wikimaker
+cd <repo-root>
 conda env create -f environment.yml
 conda run -n wikimaker python -m pip install -r requirements.txt
 conda run -n wikimaker python wikimaker.py --help

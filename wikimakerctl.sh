@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="/Users/enkay/dev/wikimaker"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${WIKIMAKER_REPO_ROOT:-$SCRIPT_DIR}"
 CONDA_ENV="${WIKIMAKER_CONDA_ENV:-wikimaker}"
-CORPUS_ROOT_DEFAULT="/Users/enkay/extracts"
-OUTPUT_ROOT_DEFAULT="/Users/enkay/extracts/wiki-build/output"
-STATE_ROOT_DEFAULT="/Users/enkay/extracts/wiki-build/state"
-TELEMETRY_ROOT_DEFAULT="/Users/enkay/extracts/wiki-build/telemetry"
-BASE_URL_DEFAULT="http://192.168.86.11:11434"
+CORPUS_ROOT_DEFAULT="$HOME/extracts"
+OUTPUT_ROOT_DEFAULT="$HOME/extracts/wiki-build/output"
+STATE_ROOT_DEFAULT="$HOME/extracts/wiki-build/state"
+TELEMETRY_ROOT_DEFAULT="$HOME/extracts/wiki-build/telemetry"
+BASE_URL_DEFAULT="http://127.0.0.1:11434"
 MODEL_DEFAULT="gemma4:e4b-mlx"
 PID_FILE="/tmp/wikimaker.pid"
 LOG_FILE="/tmp/wikimaker.log"
@@ -78,11 +79,10 @@ print_status() {
 }
 
 run_wikimaker() {
-  env \
+  env -u OPENAI_API_KEY \
     OPENAI_BASE_URL="$base_url" \
     WIKIMAKER_PROVIDER="ollama" \
     WIKIMAKER_LLM_API_STYLE="ollama" \
-    OPENAI_API_KEY="" \
     WIKIMAKER_ANALYSIS_MODEL="$model" \
     WIKIMAKER_GENERATION_MODEL="$model" \
     WIKIMAKER_REVIEW_MODEL="$model" \
@@ -211,13 +211,17 @@ preflight_run() {
     exit 1
   fi
   mkdir -p "$output_root" "$state_root" "$telemetry_root"
-  echo "Preflight: verifying local Ollama and model..."
-  conda run -n "$CONDA_ENV" python /Users/enkay/.hermes/skills/devops/local-ai-connectivity-check/scripts/check_local_ai.py \
-    --provider ollama \
-    --base-url "$base_url" \
-    --model "$model" \
-    --timeout 60 \
-    --prompt "Return exactly one word: OK."
+  if [[ -n "${WIKIMAKER_CONNECTIVITY_CHECK_SCRIPT:-}" ]]; then
+    echo "Preflight: verifying local model endpoint..."
+    conda run -n "$CONDA_ENV" python "$WIKIMAKER_CONNECTIVITY_CHECK_SCRIPT" \
+      --provider ollama \
+      --base-url "$base_url" \
+      --model "$model" \
+      --timeout 60 \
+      --prompt "Return exactly one word: OK."
+  else
+    echo "Preflight: skipping optional connectivity check. Set WIKIMAKER_CONNECTIVITY_CHECK_SCRIPT to enable it."
+  fi
 }
 
 is_running() {

@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path("/Users/enkay/dev/wikimaker")
+REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER = REPO_ROOT / "wikimaker.py"
 CONDA_ENV = "wikimaker"
 

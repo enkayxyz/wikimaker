@@ -21,7 +21,7 @@ Current stack:
 - Python 3 implementation
 - Google ADK 2 for orchestration and observability
 - local OpenAI-compatible API surface for model calls
-- Ollama on the LAN as the default inference backend
+- Ollama on localhost as the default inference backend
 - static Markdown outputs plus a local browser frontend
 - pytest for smoke and integration checks
 - shell helper: `wikimakerctl.sh`
@@ -29,7 +29,7 @@ Current stack:
 Important implementation details:
 - package namespace: `google.adk`
 - working package line in this environment: `google-adk==2.0.0b1`
-- local LLM endpoint: `http://192.168.86.11:11434`
+- local LLM endpoint: `http://127.0.0.1:11434`
 - the pipeline is intentionally local-only for real corpus runs
 - do not add a deterministic non-AI wiki-generation fallback
 
@@ -75,7 +75,7 @@ Non-negotiables:
 - duplicates, evolution, and contradictions must be surfaced, not hidden
 - folder-level `gist.md` and `ledger.md` are required for long-term corpus memory
 - local-first behavior is the default
-- real-corpus runs should stay on the 192.168.86.* Ollama path
+- real-corpus runs should stay on the 127.0.0.1 Ollama path
 
 Desired product shape:
 - one source-summary page per source document

@@ -32,7 +32,7 @@ Current stack:
 - Python 3.11+
 - Google ADK 2 for orchestration and observability
 - local OpenAI-compatible API surface for model calls
-- Ollama on the LAN as the default inference backend
+- Ollama on localhost as the default inference backend
 - static Markdown outputs plus a local browser frontend
 - pytest / unittest smoke coverage
 - optional local ADK tracing and evaluation hooks
@@ -40,7 +40,7 @@ Current stack:
 Important implementation facts:
 - ADK import namespace: `google.adk`
 - pinned package line in this environment: `google-adk==2.1.0`
-- local inference endpoint: `http://192.168.86.11:11434`
+- local inference endpoint: `http://127.0.0.1:11434`
 - Python runtime: 3.11 or newer
 - real-corpus runs are intentionally local-only
 - there is no deterministic non-AI fallback wiki-generation path
@@ -99,7 +99,7 @@ Recommended local setup:
 - conda env: `wikimaker`
 - provider: `ollama`
 - API style: `ollama`
-- base URL: `http://192.168.86.11:11434`
+- base URL: `http://127.0.0.1:11434`
 - analysis/generation/review model: your local Gemma 4 E4B model, if available
 
 ## How to run
@@ -114,6 +114,53 @@ Create/update the environment:
 ```bash
 conda env create -f environment.yml
 conda run -n wikimaker python -m pip install -r requirements.txt
+```
+
+Machine-local settings live in `.env`, which is intentionally ignored. Start from the public template:
+
+```bash
+cp .env.example .env
+$EDITOR .env
+```
+
+## Public Export And Test Machine Setup
+
+Do not publish old git history if it contains private paths, LAN details, or corpus names. Create a sanitized export and initialize a fresh public repository from that export.
+
+Create the sanitized export:
+
+```bash
+cd <repo-root>
+./sanitize_public_release.sh export /tmp/wikimaker-public
+cd /tmp/wikimaker-public
+./sanitize_public_release.sh audit
+git init
+git add .
+git commit -m "Initial sanitized WikiMaker release"
+git remote add origin <NEW_SANITIZED_REPO_URL>
+git push -u origin main
+```
+
+On a test machine, copy only `.env.example` to `.env`, then edit `.env` for that machine's local endpoint, model names, corpus root, and output roots:
+
+```bash
+git clone <NEW_SANITIZED_REPO_URL> wikimaker
+cd wikimaker
+
+conda env create -f environment.yml
+conda run -n wikimaker python -m pip install -r requirements.txt
+
+cp .env.example .env
+$EDITOR .env
+
+./sanitize_public_release.sh audit
+
+conda run -n wikimaker python wikimaker.py --help
+conda run -n wikimaker python -m unittest tests.test_wikimaker_smoke -v
+conda run -n wikimaker python -m compileall -q code tests
+
+./wikimakerctl.sh status
+./wikimakerctl.sh fresh
 ```
 
 Dry run:
@@ -134,7 +181,7 @@ conda run -n wikimaker python wikimaker.py \
 
 Mac helper:
 ```bash
-/Users/enkay/dev/wikimaker/wikimakerctl.sh fresh
+<repo-root>/wikimakerctl.sh fresh
 ./wikimakerctl.sh run
 ./wikimakerctl.sh start
 ./wikimakerctl.sh logs
@@ -145,7 +192,7 @@ Mac helper:
 
 For the real default corpus, `wikimakerctl.sh fresh` is the canonical full rebuild path: it resets only generated output/state/telemetry, never the source extracts, then runs in the foreground.
 
-`wikimakerctl.sh` is intentionally tuned for the primary macOS/Hermes test setup and hardcodes `/Users/enkay` defaults. For another machine, either set the `WIKIMAKER_*` environment variables or call `conda run -n wikimaker python wikimaker.py ...` with explicit roots.
+`wikimakerctl.sh` is intentionally tuned for the primary macOS/local agent test setup and hardcodes `$HOME` defaults. For another machine, either set the `WIKIMAKER_*` environment variables or call `conda run -n wikimaker python wikimaker.py ...` with explicit roots.
 
 ## What the outputs contain
 

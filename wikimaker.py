@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 CODE_ROOT = PROJECT_ROOT / "code"
 
 load_dotenv(PROJECT_ROOT / ".env", override=False)
-load_dotenv(Path.home() / ".hermes" / ".env", override=False)
+load_dotenv(Path.home() / ".wikimaker" / ".env", override=False)
 
 # Keep the console readable during large corpus runs.
 # The ADK + authlib stack is still somewhat noisy in this environment.

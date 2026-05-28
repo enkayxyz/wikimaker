@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 CODE_ROOT = PROJECT_ROOT / "code"
 
 load_dotenv(PROJECT_ROOT / ".env", override=False)
-load_dotenv(Path.home() / ".hermes" / ".env", override=False)
+load_dotenv(Path.home() / ".wikimaker" / ".env", override=False)
 
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 warnings.filterwarnings("ignore")

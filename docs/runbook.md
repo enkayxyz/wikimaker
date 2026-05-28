@@ -14,7 +14,7 @@ Put these in `.env`:
 - `WIKIMAKER_SYNTHESIS_MODE` — default `llm_only`; do not synthesize links from scan heuristics
 - `WIKIMAKER_ENABLE_QUALITY_JUDGE` — `1` to run an aggregate-only quality judge after generation
 - `WIKIMAKER_QUALITY_JUDGE_MODEL` — local model for quality judging; defaults to review model
-- The local Ollama endpoint runs on your LAN, so the code can talk to it without any external LLM dependency
+- The default local Ollama endpoint uses localhost, so the code can run without any external LLM dependency
 
 - `WIKIMAKER_USE_ADK` — retained for orchestration settings
 - `WIKIMAKER_ENABLE_ADK_TRACING` — `1` to export ADK/OpenTelemetry spans into SQLite
@@ -31,7 +31,7 @@ Put these in `.env`:
 ```env
 WIKIMAKER_PROVIDER=ollama
 WIKIMAKER_LLM_API_STYLE=ollama
-OPENAI_BASE_URL=http://192.168.86.11:11434
+OPENAI_BASE_URL=http://127.0.0.1:11434
 WIKIMAKER_ANALYSIS_MODEL=gemma4:e4b-mlx
 WIKIMAKER_GENERATION_MODEL=gemma4:e4b-mlx
 WIKIMAKER_REVIEW_MODEL=gemma4:e4b-mlx
@@ -46,9 +46,16 @@ WikiMaker requires Python 3.11 or newer. Use the dedicated `wikimaker` conda env
 Create/update runtime and test dependencies with:
 
 ```bash
-cd /Users/enkay/dev/wikimaker
+cd <repo-root>
 conda env create -f environment.yml
 conda run -n wikimaker python -m pip install -r requirements.txt
+```
+
+For a new test machine, create machine-local settings from the template:
+
+```bash
+cp .env.example .env
+$EDITOR .env
 ```
 
 ## Command
@@ -78,7 +85,7 @@ Optional flags may override env vars:
 For the default macOS corpus setup, the helper points at your configured corpus and output roots, so you can run it with no extra parameters:
 
 ```bash
-/Users/enkay/dev/wikimaker/wikimakerctl.sh fresh
+<repo-root>/wikimakerctl.sh fresh
 ```
 
 `fresh` is the canonical full rebuild command for your real corpus. It resets generated output/state/telemetry only, keeps the source extracts read-only, prints the chosen corpus/output/state/telemetry/model settings, asks for confirmation, verifies the local Ollama server and model, and then runs in the foreground with live progress.
@@ -95,18 +102,18 @@ Remote model endpoints are refused unless `WIKIMAKER_ALLOW_REMOTE_LLM=1` or `--a
 Background mode and logs:
 
 ```bash
-/Users/enkay/dev/wikimaker/wikimakerctl.sh start
-/Users/enkay/dev/wikimaker/wikimakerctl.sh logs
-/Users/enkay/dev/wikimaker/wikimakerctl.sh logs -f
-/Users/enkay/dev/wikimaker/wikimakerctl.sh stop
+<repo-root>/wikimakerctl.sh start
+<repo-root>/wikimakerctl.sh logs
+<repo-root>/wikimakerctl.sh logs -f
+<repo-root>/wikimakerctl.sh stop
 ```
 
 To wipe generated wiki output and start over cleanly, use:
 
 ```bash
-/Users/enkay/dev/wikimaker/wikimakerctl.sh reset
-/Users/enkay/dev/wikimaker/wikimakerctl.sh fresh
-/Users/enkay/dev/wikimaker/wikimakerctl.sh fresh-start
+<repo-root>/wikimakerctl.sh reset
+<repo-root>/wikimakerctl.sh fresh
+<repo-root>/wikimakerctl.sh fresh-start
 ```
 
 Reset semantics:
@@ -116,7 +123,39 @@ Reset semantics:
 - asks for a typed confirmation phrase unless `WIKIMAKER_ASSUME_YES=1` is set
 - leaves `/tmp/wikimaker.log` alone; `start` truncates it on the next run
 
-The helper pins the local Ollama endpoint to `http://192.168.86.11:11434`, uses the `wikimaker` conda env by default, and writes its PID/log to `/tmp`. It is intentionally Mac/Hermes-specific and hardcodes `/Users/enkay` defaults. Override with `WIKIMAKER_*` environment variables or use the Python CLI with explicit roots for other machines.
+The helper pins the local Ollama endpoint to `http://127.0.0.1:11434`, uses the `wikimaker` conda env by default, and writes its PID/log to `/tmp`. It is intentionally Mac/local agent-specific and hardcodes `$HOME` defaults. Override with `WIKIMAKER_*` environment variables or use the Python CLI with explicit roots for other machines.
+
+## Public export
+
+Before publishing, create a clean export without git history, `.env`, generated outputs, caches, logs, databases, or archives:
+
+```bash
+cd <repo-root>
+./sanitize_public_release.sh export /tmp/wikimaker-public
+cd /tmp/wikimaker-public
+./sanitize_public_release.sh audit
+```
+
+Initialize the new public repository from that export, not from the old checkout:
+
+```bash
+git init
+git add .
+git commit -m "Initial sanitized WikiMaker release"
+git remote add origin <NEW_SANITIZED_REPO_URL>
+git push -u origin main
+```
+
+Minimum validation on the receiving machine:
+
+```bash
+./sanitize_public_release.sh audit
+conda run -n wikimaker python wikimaker.py --help
+conda run -n wikimaker python -m unittest tests.test_wikimaker_smoke -v
+conda run -n wikimaker python -m compileall -q code tests
+./wikimakerctl.sh status
+./wikimakerctl.sh fresh
+```
 
 Corpus families currently expected:
 - WhatsApp extracts

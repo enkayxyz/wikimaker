@@ -1,12 +1,12 @@
 # WikiMaker Next Stage Implementation Plan
 
-> **For Hermes:** Use subagent-driven-development task-by-task for implementation.
+> **For local agent:** Use subagent-driven-development task-by-task for implementation.
 
 **Goal:** Make WikiMaker feel like a calm, self-sufficient wiki app while preserving provenance, local-only inference, and read-only source corpus behavior.
 
 **Architecture:** Keep WikiMaker as the provenance-first compiler. Upgrade the experience in four layers: browser UI, page-role/ranking model, backlink graph, and corpus-aware prompts. Do not merge wiki-os or add remote fetches; borrow only the discovery/navigation behaviors that improve the local wiki feel.
 
-**Tech Stack:** Python 3, local OpenAI-compatible Ollama endpoint on `192.168.86.*`, Google ADK orchestration/telemetry, static Markdown outputs, local browser HTML/JS, pytest.
+**Tech Stack:** Python 3, local OpenAI-compatible Ollama endpoint on `127.0.0.1`, Google ADK orchestration/telemetry, static Markdown outputs, local browser HTML/JS, pytest.
 
 ---
 
@@ -365,11 +365,11 @@ Use a tiny subset of the real corpus and a dry run first, then a normal run if t
 
 Example:
 ```bash
-python /Users/enkay/dev/wikimaker/wikimaker.py \
-  --corpus-root /Users/enkay/dev/FileAnalyze/MDExtract/data \
-  --output-root /Users/enkay/dev/FileAnalyze/MDExtract/wikimaker/output \
-  --state-root /Users/enkay/dev/FileAnalyze/MDExtract/wikimaker/state \
-  --telemetry-root /Users/enkay/dev/FileAnalyze/MDExtract/wikimaker/telemetry \
+python <repo-root>/wikimaker.py \
+  --corpus-root $HOME/extracts \
+  --output-root $HOME/extracts/wiki-build/output \
+  --state-root $HOME/extracts/wiki-build/state \
+  --telemetry-root $HOME/extracts/wiki-build/telemetry \
   --dry-run
 ```
 
@@ -394,7 +394,7 @@ Confirm all are true:
 
 Only after the preview passes:
 ```bash
-python /Users/enkay/dev/wikimaker/wikimaker.py --corpus-root /Users/enkay/dev/FileAnalyze/MDExtract/data
+python <repo-root>/wikimaker.py --corpus-root $HOME/extracts
 ```
 
 **Step 5: Record the result in the handoff docs**

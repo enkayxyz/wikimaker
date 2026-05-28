@@ -271,7 +271,7 @@ def _require_local_llm_config(config: dict[str, Any]) -> tuple[str, str, str]:
     if provider not in {"ollama", "osaurus", "openai-compatible", "openai"}:
         raise RuntimeError(f"Unsupported provider '{provider}'. Use ollama or openai-compatible.")
     if not base_url:
-        raise RuntimeError("Missing OPENAI_BASE_URL. Set it in /Users/enkay/dev/wikimaker/.env.")
+        raise RuntimeError("Missing OPENAI_BASE_URL. Set it in .env or pass it through the environment.")
     privacy = classify_endpoint_privacy(base_url)
     allow_remote = _boolish(config.get("allow_remote_llm"))
     if not privacy.get("allowed_by_default") and not allow_remote:
@@ -280,7 +280,7 @@ def _require_local_llm_config(config: dict[str, Any]) -> tuple[str, str, str]:
             "Set WIKIMAKER_ALLOW_REMOTE_LLM=1 or pass --allow-remote-llm only if this leak boundary is intentional."
         )
     if provider != "ollama" and not api_key:
-        raise RuntimeError("Missing OPENAI_API_KEY or OSAURUS_API_KEY in /Users/enkay/dev/wikimaker/.env.")
+        raise RuntimeError("Missing OPENAI_API_KEY or OSAURUS_API_KEY in .env or the environment.")
     return provider, base_url, api_key
 
 
@@ -406,11 +406,11 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
     generation_model = str(config.get("generation_model") or analysis_model).strip()
     review_model = str(config.get("review_model") or analysis_model).strip()
     if not analysis_model:
-        raise RuntimeError("Missing WIKIMAKER_ANALYSIS_MODEL in /Users/enkay/dev/wikimaker/.env.")
+        raise RuntimeError("Missing WIKIMAKER_ANALYSIS_MODEL in .env or the environment.")
     if not generation_model:
-        raise RuntimeError("Missing WIKIMAKER_GENERATION_MODEL in /Users/enkay/dev/wikimaker/.env.")
+        raise RuntimeError("Missing WIKIMAKER_GENERATION_MODEL in .env or the environment.")
     if not review_model:
-        raise RuntimeError("Missing WIKIMAKER_REVIEW_MODEL in /Users/enkay/dev/wikimaker/.env.")
+        raise RuntimeError("Missing WIKIMAKER_REVIEW_MODEL in .env or the environment.")
 
     scan_prompt = _compact_scan_for_prompt(scan, diff, limit=sample_files)
     errors: list[str] = []

@@ -41,7 +41,7 @@ class WikiMakerSmokeTests(unittest.TestCase):
 
     def test_endpoint_privacy_classification_and_remote_opt_in(self) -> None:
         self.assertEqual(classify_endpoint_privacy("http://127.0.0.1:11434")["classification"], "local")
-        self.assertEqual(classify_endpoint_privacy("http://192.168.86.11:11434")["classification"], "lan")
+        self.assertEqual(classify_endpoint_privacy("http://10.0.0.2:11434")["classification"], "lan")
         remote = classify_endpoint_privacy("https://api.example.com/v1")
         self.assertEqual(remote["classification"], "remote")
         self.assertFalse(remote["allowed_by_default"])
@@ -692,7 +692,7 @@ Journal entry and reflection about priorities.
             self.assertEqual(browser_data["counts"]["semantic_source_pages"], 2)
             self.assertEqual(browser_data["counts"]["library_pages"], 3)
             self.assertGreater(browser_data["counts"]["edges"], 0)
-            self.assertEqual(browser_data["privacy"]["model_endpoint"]["classification"], "lan")
+            self.assertEqual(browser_data["privacy"]["model_endpoint"]["classification"], "local")
             self.assertEqual(browser_data["privacy"]["browser"]["classification"], "static-local")
             source_text = (output_root / "sources" / "chats__team.md").read_text(encoding="utf-8")
             self.assertIn("## Links to", source_text)
@@ -780,7 +780,7 @@ Journal entry and reflection about priorities.
                 }
             )
             result = subprocess.run(
-                ["/Users/enkay/dev/wikimaker/wikimakerctl.sh", "reset"],
+                [str(REPO_ROOT / "wikimakerctl.sh"), "reset"],
                 cwd=REPO_ROOT,
                 env=env,
                 capture_output=True,

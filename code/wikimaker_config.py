@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 from typing import Any
 
-LOCAL_OLLAMA_BASE_URL = "http://192.168.86.11:11434"
+LOCAL_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 
 
 @dataclass(slots=True)

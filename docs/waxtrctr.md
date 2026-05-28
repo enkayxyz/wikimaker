@@ -18,7 +18,7 @@ It is designed to:
 
 ## Default run
 ```bash
-python /Users/enkay/dev/wikimaker/waxtrctr.py
+python <repo-root>/waxtrctr.py
 ```
 
 By default, WAXtrctr writes to:
@@ -26,10 +26,10 @@ By default, WAXtrctr writes to:
 
 ## Other common modes
 ```bash
-python /Users/enkay/dev/wikimaker/whatsapp_backup_extractor.py --mode incremental
-python /Users/enkay/dev/wikimaker/whatsapp_backup_extractor.py --output-root /some/other/path
-python /Users/enkay/dev/wikimaker/whatsapp_backup_extractor.py --db /path/to/ChatStorage.sqlite
-python /Users/enkay/dev/wikimaker/whatsapp_backup_extractor.py --manifest /path/to/Manifest.db --backup-root /path/to/iPhoneBackup
+python <repo-root>/whatsapp_backup_extractor.py --mode incremental
+python <repo-root>/whatsapp_backup_extractor.py --output-root /some/other/path
+python <repo-root>/whatsapp_backup_extractor.py --db /path/to/ChatStorage.sqlite
+python <repo-root>/whatsapp_backup_extractor.py --manifest /path/to/Manifest.db --backup-root /path/to/iPhoneBackup
 ```
 
 ## Open-source intent
