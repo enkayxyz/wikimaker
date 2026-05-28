@@ -24,7 +24,7 @@ Put these in `.env`:
 - `OPENAI_API_KEY` — key for an OpenAI-compatible backend if you switch back later
 - `OSAURUS_API_KEY` — optional alias for `OPENAI_API_KEY`
 - Ollama does not need a key unless you put a proxy in front of it
-- `OPENAI_BASE_URL` — local OpenAI-compatible endpoint override
+- `OPENAI_BASE_URL` — OpenAI-compatible endpoint for this machine; use `http://127.0.0.1:11434` only when Ollama runs locally, otherwise point it at the Ollama host/IP for the test machine
 
 ### Local Ollama example
 
@@ -40,6 +40,8 @@ WIKIMAKER_ENABLE_QUALITY_JUDGE=1
 ```
 
 Use your local Ollama models for the stage 1 source-page pass, stage 2 commonality pass, and stage 3 verification pass.
+
+If Ollama is running on another machine, replace `127.0.0.1` with that machine's IP or hostname in `OPENAI_BASE_URL`.
 
 WikiMaker requires Python 3.11 or newer. Use the dedicated `wikimaker` conda environment.
 

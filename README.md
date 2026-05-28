@@ -92,14 +92,14 @@ Suggested environment variables:
 - `WIKIMAKER_SYNTHESIS_MODE` — default `llm_only`; `coverage_fallback` is an explicit experiment
 - `WIKIMAKER_ENABLE_QUALITY_JUDGE`
 - `WIKIMAKER_QUALITY_JUDGE_MODEL`
-- `OPENAI_BASE_URL`
+- `OPENAI_BASE_URL` - OpenAI-compatible endpoint for this machine; use `127.0.0.1` only when Ollama is local
 - `OPENAI_API_KEY` or `OSAURUS_API_KEY` if using an OpenAI-compatible backend instead of plain Ollama
 
 Recommended local setup:
 - conda env: `wikimaker`
 - provider: `ollama`
 - API style: `ollama`
-- base URL: `http://127.0.0.1:11434`
+- base URL: `http://127.0.0.1:11434` when Ollama runs on the same machine
 - analysis/generation/review model: your local Gemma 4 E4B model, if available
 
 ## How to run
