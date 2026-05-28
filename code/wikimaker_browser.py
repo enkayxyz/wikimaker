@@ -272,13 +272,15 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
     }}
     a {{ color: var(--accent); text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
-    .shell {{ max-width: 1500px; margin: 0 auto; padding: 24px; }}
+    .shell {{ max-width: 1500px; margin: 0 auto; padding: 18px 24px 24px; }}
     .hero {{
       display: grid;
-      gap: 18px;
-      grid-template-columns: 1.2fr 0.8fr;
-      align-items: stretch;
-      margin-bottom: 18px;
+      gap: 16px;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 0.7fr);
+      align-items: start;
+      margin-bottom: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
     }}
     .card {{
       background: var(--panel);
@@ -286,11 +288,11 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
       border-radius: 8px;
       box-shadow: var(--shadow);
     }}
-    .hero-main {{ padding: 24px; }}
+    .hero-main {{ padding: 0; }}
     .kicker {{ text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-size: 12px; margin-bottom: 10px; }}
-    h1 {{ margin: 0 0 10px; font-size: 2rem; line-height: 1.15; }}
-    .lead {{ color: var(--muted); font-size: 1.02rem; line-height: 1.55; max-width: 75ch; }}
-    .meta {{ margin-top: 18px; display: flex; flex-wrap: wrap; gap: 10px; }}
+    h1 {{ margin: 0 0 8px; font-size: 1.55rem; line-height: 1.2; }}
+    .lead {{ color: var(--muted); font-size: 0.98rem; line-height: 1.45; max-width: 86ch; }}
+    .meta {{ margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }}
     .pill {{
       display: inline-flex; align-items: center; gap: 8px;
       padding: 7px 10px; border-radius: 8px;
@@ -298,12 +300,12 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
       color: var(--text); font-size: 13px;
     }}
     .pill strong {{ color: var(--text); }}
-    .hero-side {{ padding: 18px; display: grid; gap: 12px; }}
+    .hero-side {{ padding: 0; display: grid; gap: 10px; }}
     .stat-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
     .stat {{ padding: 16px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); }}
     .stat .num {{ font-size: 1.8rem; font-weight: 700; }}
     .stat .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }}
-    .toolbar {{ display: grid; grid-template-columns: 1fr auto; gap: 12px; margin: 18px 0; align-items: start; }}
+    .toolbar {{ display: grid; grid-template-columns: 1fr auto; gap: 12px; margin: 14px 0 16px; align-items: start; }}
     .searchbox {{
       width: 100%; padding: 14px 16px; border-radius: 8px; border: 1px solid var(--line);
       background: var(--surface); color: var(--text); font-size: 1rem;
@@ -375,19 +377,19 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
 </head>
 <body>
   <div class="shell">
-    <div class="hero card">
+    <div class="hero">
       <div class="hero-main">
-        <div class="kicker">WikiMaker browser frontend</div>
-        <h1>Browse the corpus like a wiki, without losing provenance.</h1>
+        <div class="kicker">WikiMaker local wiki</div>
+        <h1>WikiMaker</h1>
         <div class="lead">
-          This local browser UI is generated from WikiMaker’s discovery artifacts. It now surfaces the semantic wiki pages and the full source library so you can browse like a wiki while keeping every page one click away from provenance.
+          Browse generated wiki pages, source summaries, backlinks, graph edges, and provenance from one static local HTML file.
         </div>
         <div class="lead" style="margin-top:12px;">
-          {corpus_summary or 'Local, static, provenance-first browsing only.'}
+          {corpus_summary or 'Local, static, provenance-first browsing.'}
         </div>
         <div class="meta">
           <span class="pill"><strong>Generated</strong> {generated_at}</span>
-          <span class="pill"><strong>Semantic pages</strong> {semantic_sources_count}</span>
+          <span class="pill"><strong>Wiki pages</strong> {semantic_sources_count}</span>
           <span class="pill"><strong>Library pages</strong> {library_pages_count}</span>
           <span class="pill"><strong>Wiki sets</strong> {wiki_sets_count}</span>
           <span class="pill"><strong>Topics</strong> {topics_count}</span>
@@ -399,7 +401,7 @@ def _render_browser_html(payload: dict[str, Any]) -> str:
       </div>
       <div class="hero-side">
         <div class="stat-grid">
-          <div class="stat"><div class="num" id="countSemantic">{semantic_sources_count}</div><div class="label">semantic pages</div></div>
+          <div class="stat"><div class="num" id="countSemantic">{semantic_sources_count}</div><div class="label">wiki pages</div></div>
           <div class="stat"><div class="num" id="countLibrary">{library_pages_count}</div><div class="label">library pages</div></div>
           <div class="stat"><div class="num" id="countSets">{wiki_sets_count}</div><div class="label">wiki sets</div></div>
           <div class="stat"><div class="num" id="countEdges">{edges_count}</div><div class="label">graph edges</div></div>

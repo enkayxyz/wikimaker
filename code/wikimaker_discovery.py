@@ -516,7 +516,7 @@ def write_discovery_views(config: WikiMakerConfig, scan: dict[str, Any], diff: d
         title = _escape_md_cell(page.get("title") or record.get("title") or Path(rel_path).stem)
         role = _escape_md_cell(row.get("page_role") or page.get("page_role") or "knowledge_page")
         status = _status_for_path(rel_path, diff)
-        link_count = len(_clean_list(page.get("related_pages"))) + len(_clean_list(page.get("used_in")))
+        link_count = int(row.get("backlinks", 0) or 0) + int(row.get("outlinks", 0) or 0)
         search_lines.append(f"| {title} | {role} | `{rel_path}` | {status} | {link_count} |")
     search_lines.extend([
         "",
@@ -531,7 +531,7 @@ def write_discovery_views(config: WikiMakerConfig, scan: dict[str, Any], diff: d
         title = _escape_md_cell(page.get("title") or record.get("title") or Path(rel_path).stem)
         role = _escape_md_cell(row.get("page_role") or page.get("page_role") or "knowledge_page")
         status = _status_for_path(rel_path, diff)
-        link_count = len(_clean_list(page.get("related_pages"))) + len(_clean_list(page.get("used_in")))
+        link_count = int(row.get("backlinks", 0) or 0) + int(row.get("outlinks", 0) or 0)
         search_lines.append(f"| {title} | {role} | `{rel_path}` | {status} | {link_count} |")
     search_lines.extend([
         "",

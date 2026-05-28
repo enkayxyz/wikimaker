@@ -401,7 +401,7 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
     """Run WikiMaker through a local OpenAI-compatible inference server only."""
 
     provider, base_url, api_key = _require_local_llm_config(config)
-    sample_files = int(config.get("sample_files", 5) or 5)
+    sample_files = int(config.get("sample_files", 50) or 50)
     analysis_model = str(config.get("analysis_model") or "").strip()
     generation_model = str(config.get("generation_model") or analysis_model).strip()
     review_model = str(config.get("review_model") or analysis_model).strip()

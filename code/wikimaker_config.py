@@ -26,7 +26,7 @@ class WikiMakerConfig:
     enable_adk_eval: bool = False
     adk_trace_db: str = ""
     adk_eval_dir: str = ""
-    sample_files: int = 5
+    sample_files: int = 50
     progress_every: int = 100
     dry_run: bool = False
     allow_remote_llm: bool = False
@@ -63,7 +63,7 @@ class WikiMakerConfig:
         enable_adk_eval = _boolish(pick("WIKIMAKER_ENABLE_ADK_EVAL", pick("enable_adk_eval", "0")))
         adk_trace_db = pick("WIKIMAKER_ADK_TRACE_DB", pick("adk_trace_db", str(telemetry_root / "adk_traces.sqlite3")))
         adk_eval_dir = pick("WIKIMAKER_ADK_EVAL_DIR", pick("adk_eval_dir", str(telemetry_root / "adk_eval")))
-        sample_files = int(pick("WIKIMAKER_SAMPLE_FILES", pick("sample_files", "5")) or 5)
+        sample_files = int(pick("WIKIMAKER_SAMPLE_FILES", pick("sample_files", "50")) or 50)
         progress_every = int(pick("WIKIMAKER_PROGRESS_EVERY", pick("progress_every", "100")) or 100)
         dry_run = _boolish(pick("WIKIMAKER_DRY_RUN", pick("dry_run", "0")))
         allow_remote_llm = _boolish(pick("WIKIMAKER_ALLOW_REMOTE_LLM", pick("allow_remote_llm", "0")))

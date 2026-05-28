@@ -356,7 +356,7 @@ Journal entry and reflection about priorities.
             self.assertIn("Recently changed", browser_text)
             self.assertIn("Wiki sets", browser_text)
             self.assertIn("Source library", browser_text)
-            self.assertIn("semantic pages", browser_text)
+            self.assertIn("wiki pages", browser_text)
             self.assertIn("library pages", browser_text)
             self.assertIn("Links to", browser_text)
             self.assertIn("Linked from", browser_text)
@@ -585,12 +585,17 @@ Journal entry and reflection about priorities.
             telemetry_root = root / "telemetry"
             (corpus_root / "chats").mkdir(parents=True, exist_ok=True)
             (corpus_root / "bills").mkdir(parents=True, exist_ok=True)
+            (corpus_root / "ai").mkdir(parents=True, exist_ok=True)
             (corpus_root / "chats" / "team.md").write_text(
                 "# Team Chat\n\nAlice: ship the launch plan after invoice review.\nBob: agreed.\n",
                 encoding="utf-8",
             )
             (corpus_root / "bills" / "invoice.md").write_text(
                 "# Invoice 42\n\nVendor: ACME Corp\nAmount: $42.00\nDue: 2026-06-01\n",
+                encoding="utf-8",
+            )
+            (corpus_root / "ai" / "assistant.md").write_text(
+                "# AI Conversation\n\nUser: connect this with the launch plan.\nAssistant: link the project and finance evidence.\n",
                 encoding="utf-8",
             )
             config = WikiMakerConfig(
@@ -667,7 +672,7 @@ Journal entry and reflection about priorities.
             with patch("wikimaker_runner.run_pipeline", side_effect=fake_pipeline):
                 result = run(config)
 
-            self.assertEqual(result["scan"]["total_files"], 2)
+            self.assertEqual(result["scan"]["total_files"], 3)
             self.assertTrue((output_root / "_privacy.md").exists())
             self.assertTrue((output_root / "_health.md").exists())
             self.assertTrue((output_root / "browser" / "index.html").exists())
@@ -675,18 +680,24 @@ Journal entry and reflection about priorities.
             self.assertTrue((output_root / "wiki-sets" / "_topics" / "launch-plan.md").exists())
             self.assertTrue((output_root / "wiki-sets" / "_entities" / "acme-corp.md").exists())
             self.assertTrue((output_root / "sources" / "chats__team.md").exists())
+            self.assertTrue((output_root / "sources" / "ai__assistant.md").exists())
             self.assertTrue((state_root / "corpus_snapshot.json").exists())
             html = (output_root / "browser" / "index.html").read_text(encoding="utf-8")
             self.assertNotIn("fetch(", html)
             self.assertNotIn("radial-gradient", html)
             self.assertNotIn("hero-side card", html)
             browser_data = json.loads((output_root / "browser" / "data.json").read_text(encoding="utf-8"))
+            self.assertEqual(browser_data["counts"]["semantic_source_pages"], 3)
+            self.assertGreater(browser_data["counts"]["edges"], 0)
             self.assertEqual(browser_data["privacy"]["model_endpoint"]["classification"], "lan")
             self.assertEqual(browser_data["privacy"]["browser"]["classification"], "static-local")
             source_text = (output_root / "sources" / "chats__team.md").read_text(encoding="utf-8")
             self.assertIn("## Links to", source_text)
             self.assertIn("Invoice 42", source_text)
             self.assertIn("## Linked from", source_text)
+            search_text = (output_root / "_search.md").read_text(encoding="utf-8")
+            self.assertIn("AI Conversation", search_text)
+            self.assertRegex(search_text, r"\| `ai/assistant\.md` \| added \| [1-9]")
 
     def test_source_stub_names_are_sanitized_for_weird_paths(self) -> None:
 

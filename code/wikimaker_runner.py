@@ -666,6 +666,222 @@ def _status_for(rel_path: str, diff: dict[str, list[str]]) -> str:
     return "new"
 
 
+def _clean_items(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    result: list[str] = []
+    for item in values:
+        text = str(item).strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _merge_items(*values: Any, limit: int = 30) -> list[str]:
+    merged: list[str] = []
+    for value in values:
+        for item in _clean_items(value):
+            if item not in merged:
+                merged.append(item)
+            if len(merged) >= limit:
+                return merged
+    return merged
+
+
+def _kind_label(kind: str) -> str:
+    return str(kind or "mixed_notes").replace("_", " ").replace("-", " ").strip().title() or "Mixed Notes"
+
+
+def _role_for_record(rel_path: str, record: dict[str, Any]) -> str:
+    corpus_kind = str(record.get("corpus_kind") or record.get("source_kind") or "").lower()
+    text = " ".join([rel_path, str(record.get("title") or ""), corpus_kind]).lower()
+    if any(token in corpus_kind for token in ("whatsapp", "conversation", "chat", "imessage")):
+        return "thread_page"
+    if "ai_conversation" in corpus_kind:
+        return "thread_page"
+    if any(token in corpus_kind for token in ("index", "ledger")):
+        return "ledger_page" if "ledger" in text or "log" in text else "index_page"
+    if any(token in text for token in ("duplicate", "near duplicate")):
+        return "duplicate_page"
+    if any(token in text for token in ("contradiction", "conflict")):
+        return "contradiction_page"
+    return "knowledge_page"
+
+
+def _summary_for_record(rel_path: str, record: dict[str, Any]) -> str:
+    title = str(record.get("title") or Path(rel_path).stem).strip()
+    corpus_kind = str(record.get("corpus_kind") or record.get("source_kind") or "mixed_notes").strip()
+    headings = _clean_items(record.get("headings"))[:3]
+    if headings:
+        return f"{title}. Headings: " + "; ".join(headings)
+    return f"{title}. Source file classified as {_kind_label(corpus_kind)}."
+
+
+def _topics_for_record(rel_path: str, record: dict[str, Any]) -> list[str]:
+    topics: list[str] = []
+    corpus_kind = str(record.get("corpus_kind") or "").strip()
+    if corpus_kind:
+        topics.append(_kind_label(corpus_kind))
+    parts = [part for part in Path(rel_path).parts[:-1] if part not in {".", ""}]
+    for part in parts[:3]:
+        label = _kind_label(part)
+        if label not in topics:
+            topics.append(label)
+    for heading in _clean_items(record.get("headings"))[:4]:
+        label = heading.lstrip("#").strip()
+        if label and label not in topics:
+            topics.append(label)
+    return topics[:8]
+
+
+def _entities_for_record(record: dict[str, Any]) -> list[str]:
+    title = str(record.get("title") or "").strip()
+    corpus_kind = str(record.get("corpus_kind") or "").lower()
+    entities: list[str] = []
+    if title.startswith("Chat: "):
+        candidate = title.removeprefix("Chat: ").strip()
+        if candidate and not candidate.startswith("+") and "unknown" not in candidate.lower():
+            entities.append(candidate)
+    elif corpus_kind in {"financial_documents", "contacts", "emails", "meeting_notes"} and title:
+        entities.append(title)
+    return entities[:5]
+
+
+def _resolve_markdown_target(rel_path: str, target: str, existing_paths: set[str]) -> str:
+    clean = str(target or "").split("#", 1)[0].split("?", 1)[0].strip()
+    if not clean or "://" in clean or clean.startswith(("mailto:", "tel:")):
+        return ""
+    if not clean.lower().endswith(".md"):
+        return ""
+    candidates = []
+    if clean.startswith("/"):
+        candidates.append(clean.lstrip("/"))
+    else:
+        candidates.append(str((Path(rel_path).parent / clean).as_posix()))
+        candidates.append(clean)
+    for candidate in candidates:
+        normalized = str(Path(candidate).as_posix()).lstrip("./")
+        if normalized in existing_paths:
+            return normalized
+    basename = Path(clean).name
+    matches = [path for path in existing_paths if Path(path).name == basename]
+    return matches[0] if len(matches) == 1 else ""
+
+
+def complete_pipeline_from_scan(scan: dict[str, Any], pipeline: dict[str, Any]) -> dict[str, Any]:
+    """Guarantee every scanned source has a generated page and basic wiki links."""
+
+    files = scan.get("files", {})
+    generation = dict(pipeline.get("generation") or {})
+    analysis = dict(pipeline.get("analysis") or {})
+    existing_pages = [page for page in generation.get("source_pages", []) if isinstance(page, dict) and page.get("path")]
+    existing_by_path = {str(page.get("path")): dict(page) for page in existing_pages}
+    existing_paths = {str(path) for path in files}
+    title_by_path = {
+        str(rel_path): str(record.get("title") or Path(str(rel_path)).stem)
+        for rel_path, record in files.items()
+        if isinstance(record, dict)
+    }
+
+    folder_groups: dict[str, list[str]] = {}
+    kind_groups: dict[str, list[str]] = {}
+    for rel_path, record in sorted(files.items()):
+        if not isinstance(record, dict) or record.get("error"):
+            continue
+        folder_groups.setdefault(str(Path(rel_path).parent), []).append(rel_path)
+        kind_groups.setdefault(str(record.get("corpus_kind") or "mixed_notes"), []).append(rel_path)
+
+    neighbor_links: dict[str, list[str]] = {}
+    for paths in folder_groups.values():
+        ordered = sorted(paths)
+        for index, rel_path in enumerate(ordered):
+            links: list[str] = []
+            for neighbor_index in (index - 1, index + 1):
+                if 0 <= neighbor_index < len(ordered):
+                    links.append(title_by_path.get(ordered[neighbor_index], ordered[neighbor_index]))
+            neighbor_links[rel_path] = links
+
+    completed_pages: list[dict[str, Any]] = []
+    for rel_path, record in sorted(files.items()):
+        if not isinstance(record, dict) or record.get("error"):
+            continue
+        page = dict(existing_by_path.get(rel_path) or {})
+        corpus_kind = str(record.get("corpus_kind") or page.get("corpus_kind") or "mixed_notes")
+        folder = str(Path(rel_path).parent)
+        kind_set = f"{_kind_label(corpus_kind)} Sources"
+        folder_set = f"{_kind_label(folder if folder != '.' else 'Root')} Folder"
+        explicit_internal = []
+        for target in _clean_items(record.get("source_links")):
+            resolved = _resolve_markdown_target(rel_path, target, existing_paths)
+            if resolved:
+                explicit_internal.append(title_by_path.get(resolved, resolved))
+        page.update(
+            {
+                "path": rel_path,
+                "title": page.get("title") or record.get("title") or Path(rel_path).stem,
+                "page_role": page.get("page_role") or _role_for_record(rel_path, record),
+                "summary": page.get("summary") or _summary_for_record(rel_path, record),
+                "platform": page.get("platform") or record.get("platform") or "",
+                "source_kind": page.get("source_kind") or record.get("source_kind") or corpus_kind,
+                "corpus_kind": page.get("corpus_kind") or corpus_kind,
+                "extracted_at": page.get("extracted_at") or record.get("extracted_at") or "",
+                "source_url": page.get("source_url") or record.get("source_url") or "",
+                "source_paths": _merge_items(page.get("source_paths"), [rel_path], limit=10),
+                "external_links": _merge_items(page.get("external_links"), record.get("source_links"), limit=20),
+                "tags": _merge_items(page.get("tags"), [corpus_kind, folder], limit=12),
+                "topics": _merge_items(page.get("topics"), _topics_for_record(rel_path, record), limit=12),
+                "entities": _merge_items(page.get("entities"), _entities_for_record(record), limit=12),
+                "related_pages": _merge_items(page.get("related_pages"), explicit_internal, neighbor_links.get(rel_path, []), limit=20),
+                "used_in": _merge_items(page.get("used_in"), [kind_set, folder_set], limit=12),
+                "key_snippets": _merge_items(page.get("key_snippets"), limit=12),
+                "breadcrumbs": _merge_items(page.get("breadcrumbs"), list(Path(rel_path).parts[:-1]), limit=12),
+            }
+        )
+        completed_pages.append(page)
+
+    wiki_sets = [dict(item) for item in generation.get("wiki_set_pages", []) if isinstance(item, dict)]
+    seen_set_names = {str(item.get("name") or "").strip() for item in wiki_sets if item.get("name")}
+    for corpus_kind, paths in sorted(kind_groups.items()):
+        name = f"{_kind_label(corpus_kind)} Sources"
+        if name not in seen_set_names:
+            wiki_sets.append(
+                {
+                    "name": name,
+                    "purpose": f"Automatically maintained set for {_kind_label(corpus_kind)} source pages.",
+                    "pages": [title_by_path.get(path, path) for path in paths[:250]],
+                }
+            )
+            seen_set_names.add(name)
+    for folder, paths in sorted(folder_groups.items()):
+        name = f"{_kind_label(folder if folder != '.' else 'Root')} Folder"
+        if name not in seen_set_names:
+            wiki_sets.append(
+                {
+                    "name": name,
+                    "purpose": f"Automatically maintained set for source files under `{folder}`.",
+                    "pages": [title_by_path.get(path, path) for path in paths[:250]],
+                }
+            )
+            seen_set_names.add(name)
+
+    corpus_kinds = sorted({str(record.get("corpus_kind") or "").strip() for record in files.values() if isinstance(record, dict) and record.get("corpus_kind")})
+    analysis["corpus_kinds"] = _merge_items(analysis.get("corpus_kinds"), corpus_kinds, limit=100)
+    if not analysis.get("corpus_summary") or "fallback" in str(analysis.get("corpus_summary")).lower():
+        analysis["corpus_summary"] = f"Compiled {len(completed_pages)} source files across {len(corpus_kinds)} detected corpus families."
+    generation["source_pages"] = completed_pages
+    generation["wiki_set_pages"] = wiki_sets
+    generation.setdefault("root_index_summary", analysis.get("corpus_summary", ""))
+    generation.setdefault("dashboard_summary", analysis.get("corpus_summary", ""))
+    generation.setdefault("stats_summary", f"{len(completed_pages)} source pages, {len(wiki_sets)} wiki sets.")
+    pipeline["analysis"] = analysis
+    pipeline["generation"] = generation
+    if len(existing_pages) < len(completed_pages):
+        errors = list(pipeline.get("errors") or [])
+        errors.append(f"completed source-page coverage from scan: {len(existing_pages)} model pages -> {len(completed_pages)} generated pages")
+        pipeline["errors"] = errors
+    return pipeline
+
+
 def _write_dry_run_preview(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[str, list[str]], pipeline: dict[str, Any]) -> Path:
     telemetry_preview = config.telemetry_root / "dry_run_preview.md"
     lines = [
@@ -748,6 +964,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
 
         with tracer.start_as_current_span("wikimaker.pipeline"):
             pipeline = run_pipeline(scan, diff, config.as_dict())
+            pipeline = complete_pipeline_from_scan(scan, pipeline)
             pipeline["privacy"] = endpoint_privacy
 
         with tracer.start_as_current_span("wikimaker.telemetry"):
