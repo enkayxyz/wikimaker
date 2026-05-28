@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 import sys
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CODE_DIR = REPO_ROOT / "code"
@@ -621,6 +622,7 @@ Journal entry and reflection about priorities.
                 analysis_model="mock-analysis",
                 generation_model="mock-generation",
                 review_model="mock-review",
+                synthesis_mode="llm_only",
                 enable_quality_judge=False,
             )
 
@@ -720,6 +722,152 @@ Journal entry and reflection about priorities.
             self.assertIn("LLM generated source-page coverage is below 80%", quality_text)
             self.assertNotIn("ai/assistant.md", quality_text)
             self.assertNotIn("Team Chat", quality_text)
+
+    def test_coverage_fallback_skips_llm_and_generates_scan_pages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corpus_root = root / "corpus"
+            output_root = root / "output"
+            state_root = root / "state"
+            telemetry_root = root / "telemetry"
+            (corpus_root / "notes").mkdir(parents=True, exist_ok=True)
+            (corpus_root / "notes" / "alpha.md").write_text("# Alpha\n\nFirst note.\n", encoding="utf-8")
+            (corpus_root / "notes" / "beta.md").write_text("# Beta\n\nSecond note.\n", encoding="utf-8")
+            config = WikiMakerConfig(
+                corpus_root=corpus_root,
+                output_root=output_root,
+                state_root=state_root,
+                telemetry_root=telemetry_root,
+                analysis_model="slow-model",
+                generation_model="slow-model",
+                review_model="slow-model",
+                synthesis_mode="coverage_fallback",
+                enable_quality_judge=True,
+            )
+
+            with patch("wikimaker_runner.preflight_llm_endpoint", side_effect=AssertionError("preflight should be skipped")), patch("wikimaker_runner.run_pipeline", side_effect=AssertionError("LLM pipeline should be skipped")):
+                result = run(config)
+
+            self.assertFalse(result["llm"]["used"])
+            self.assertEqual(result["scan"]["total_files"], 2)
+            self.assertTrue((output_root / "sources" / "notes__alpha.md").exists())
+            self.assertTrue((output_root / "sources" / "notes__beta.md").exists())
+            browser_data = json.loads((output_root / "browser" / "data.json").read_text(encoding="utf-8"))
+            self.assertEqual(browser_data["counts"]["library_pages"], 2)
+            self.assertGreaterEqual(browser_data["counts"]["semantic_source_pages"], 2)
+            quality_text = (output_root / "_llm_quality.md").read_text(encoding="utf-8")
+            self.assertIn("Coverage fallback is scan-only", quality_text)
+
+    def test_map_reduce_cards_are_cached_and_force_paths_refresh_one_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corpus_root = root / "corpus"
+            output_root = root / "output"
+            state_root = root / "state"
+            telemetry_root = root / "telemetry"
+            (corpus_root / "notes").mkdir(parents=True, exist_ok=True)
+            (corpus_root / "notes" / "alpha.md").write_text("# Alpha\n\nFirst note.\n", encoding="utf-8")
+            (corpus_root / "notes" / "beta.md").write_text("# Beta\n\nSecond note.\n", encoding="utf-8")
+
+            def fake_chat(_provider: str, _base_url: str, _api_key: str, model: str, messages: list[dict[str, Any]], **_kwargs: Any) -> str:
+                prompt = messages[-1]["content"]
+                if "SOURCE_MARKDOWN_EXCERPT" in prompt:
+                    path = "notes/alpha.md" if "notes/alpha.md" in prompt else "notes/beta.md"
+                    title = "Alpha" if path.endswith("alpha.md") else "Beta"
+                    return json.dumps(
+                        {
+                            "path": path,
+                            "title": title,
+                            "page_role": "knowledge_page",
+                            "summary": f"{title} card summary",
+                            "source_kind": "note",
+                            "corpus_kind": "mixed_notes",
+                            "topics": [title],
+                            "entities": [],
+                            "dates": [],
+                            "amounts": [],
+                            "candidate_links": [],
+                            "source_quality": "ok",
+                            "warnings": [],
+                            "confidence": 0.8,
+                        }
+                    )
+                if "BATCH_SUMMARIES_JSON" in prompt:
+                    return json.dumps(
+                        {
+                            "corpus_summary": "Merged alpha and beta.",
+                            "root_index_summary": "Merged root.",
+                            "dashboard_summary": "Merged dashboard.",
+                            "stats_summary": "Two cards.",
+                            "wiki_sets": [{"name": "Notes", "purpose": "Notes set", "pages": ["Alpha", "Beta"]}],
+                            "topic_clusters": ["Alpha", "Beta"],
+                            "entity_clusters": [],
+                            "duplicate_clusters": [],
+                            "contradiction_clusters": [],
+                            "confidence": 0.8,
+                        }
+                    )
+                return json.dumps(
+                    {
+                        "name": "Batch 1",
+                        "summary": "Batch summary",
+                        "topics": ["Alpha", "Beta"],
+                        "entities": [],
+                        "wiki_sets": ["Notes"],
+                        "duplicate_hints": [],
+                        "contradiction_hints": [],
+                        "link_hints": [],
+                        "confidence": 0.8,
+                    }
+                )
+
+            config = WikiMakerConfig(
+                corpus_root=corpus_root,
+                output_root=output_root,
+                state_root=state_root,
+                telemetry_root=telemetry_root,
+                analysis_model="mock-analysis",
+                generation_model="mock-generation",
+                review_model="mock-review",
+                synthesis_mode="map_reduce",
+                enable_quality_judge=False,
+            )
+            with patch("wikimaker_runner.preflight_llm_endpoint", return_value={}), patch("wikimaker_cards._chat_completions", side_effect=fake_chat) as chat:
+                first = run(config)
+            self.assertEqual(first["llm"]["used"], True)
+            self.assertTrue((state_root / "card_index.json").exists())
+            self.assertEqual(len(list((state_root / "cards").glob("*.json"))), 2)
+            first_file_calls = sum(1 for call in chat.call_args_list if "SOURCE_MARKDOWN_EXCERPT" in call.args[4][-1]["content"])
+            self.assertEqual(first_file_calls, 2)
+
+            with patch("wikimaker_runner.preflight_llm_endpoint", return_value={}), patch("wikimaker_cards._chat_completions", side_effect=fake_chat) as second_chat:
+                second = run(config)
+            self.assertEqual(second["scan"]["unchanged"], 2)
+            second_file_calls = sum(1 for call in second_chat.call_args_list if "SOURCE_MARKDOWN_EXCERPT" in call.args[4][-1]["content"])
+            self.assertEqual(second_file_calls, 0)
+
+            force_config = WikiMakerConfig(
+                corpus_root=corpus_root,
+                output_root=output_root,
+                state_root=state_root,
+                telemetry_root=telemetry_root,
+                analysis_model="mock-analysis",
+                generation_model="mock-generation",
+                review_model="mock-review",
+                synthesis_mode="map_reduce",
+                force_paths=["notes/alpha.md"],
+                enable_quality_judge=False,
+            )
+            with patch("wikimaker_runner.preflight_llm_endpoint", return_value={}), patch("wikimaker_cards._chat_completions", side_effect=fake_chat) as force_chat:
+                run(force_config)
+            forced_file_calls = [call for call in force_chat.call_args_list if "SOURCE_MARKDOWN_EXCERPT" in call.args[4][-1]["content"]]
+            self.assertEqual(len(forced_file_calls), 1)
+            self.assertIn("notes/alpha.md", forced_file_calls[0].args[4][-1]["content"])
+            source_text = (output_root / "sources" / "notes__alpha.md").read_text(encoding="utf-8")
+            self.assertIn("## Build telemetry", source_text)
+            telemetry = json.loads((telemetry_root / "latest.json").read_text(encoding="utf-8"))
+            self.assertIn("stages", telemetry)
+            self.assertEqual(telemetry["stages"]["card"]["counts"]["forced"], 1)
 
     def test_source_stub_names_are_sanitized_for_weird_paths(self) -> None:
 

@@ -27,11 +27,14 @@ class WikiMakerConfig:
     adk_trace_db: str = ""
     adk_eval_dir: str = ""
     sample_files: int = 50
+    llm_batch_size: int = 50
     progress_every: int = 100
     dry_run: bool = False
     allow_remote_llm: bool = False
     prompt_profile_path: str = ""
-    synthesis_mode: str = "llm_only"
+    synthesis_mode: str = "map_reduce"
+    force_reprocess: bool = False
+    force_paths: list[str] | None = None
     enable_quality_judge: bool = True
     quality_judge_model: str = ""
 
@@ -67,13 +70,24 @@ class WikiMakerConfig:
         adk_trace_db = pick("WIKIMAKER_ADK_TRACE_DB", pick("adk_trace_db", str(telemetry_root / "adk_traces.sqlite3")))
         adk_eval_dir = pick("WIKIMAKER_ADK_EVAL_DIR", pick("adk_eval_dir", str(telemetry_root / "adk_eval")))
         sample_files = int(pick("WIKIMAKER_SAMPLE_FILES", pick("sample_files", "50")) or 50)
+        llm_batch_size = int(pick("WIKIMAKER_LLM_BATCH_SIZE", pick("llm_batch_size", "50")) or 50)
         progress_every = int(pick("WIKIMAKER_PROGRESS_EVERY", pick("progress_every", "100")) or 100)
         dry_run = _boolish(pick("WIKIMAKER_DRY_RUN", pick("dry_run", "0")))
         allow_remote_llm = _boolish(pick("WIKIMAKER_ALLOW_REMOTE_LLM", pick("allow_remote_llm", "0")))
         prompt_profile_path = pick("WIKIMAKER_PROMPT_PROFILE", pick("prompt_profile_path", ""))
-        synthesis_mode = pick("WIKIMAKER_SYNTHESIS_MODE", pick("synthesis_mode", "llm_only")).strip() or "llm_only"
-        if synthesis_mode not in {"llm_only", "coverage_fallback"}:
-            raise ValueError("WIKIMAKER_SYNTHESIS_MODE must be llm_only or coverage_fallback.")
+        synthesis_mode = pick("WIKIMAKER_SYNTHESIS_MODE", pick("synthesis_mode", "map_reduce")).strip() or "map_reduce"
+        if synthesis_mode not in {"map_reduce", "llm_only", "coverage_fallback"}:
+            raise ValueError("WIKIMAKER_SYNTHESIS_MODE must be map_reduce, llm_only, or coverage_fallback.")
+        force_reprocess = _boolish(pick("WIKIMAKER_FORCE_REPROCESS", pick("force_reprocess", "0")))
+        force_paths_raw: str | list[Any]
+        if isinstance(overrides.get("force_paths"), list):
+            force_paths_raw = overrides["force_paths"]
+        else:
+            force_paths_raw = pick("WIKIMAKER_FORCE_PATHS", pick("force_paths", ""))
+        if isinstance(force_paths_raw, list):
+            force_paths = [str(item).strip() for item in force_paths_raw if str(item).strip()]
+        else:
+            force_paths = [item.strip() for item in str(force_paths_raw).split(",") if item.strip()]
         enable_quality_judge = _boolish(pick("WIKIMAKER_ENABLE_QUALITY_JUDGE", pick("enable_quality_judge", "1")))
         quality_judge_model = pick("WIKIMAKER_QUALITY_JUDGE_MODEL", pick("quality_judge_model", review_model))
 
@@ -95,11 +109,14 @@ class WikiMakerConfig:
             adk_trace_db=adk_trace_db,
             adk_eval_dir=adk_eval_dir,
             sample_files=sample_files,
+            llm_batch_size=llm_batch_size,
             progress_every=progress_every,
             dry_run=dry_run,
             allow_remote_llm=allow_remote_llm,
             prompt_profile_path=prompt_profile_path,
             synthesis_mode=synthesis_mode,
+            force_reprocess=force_reprocess,
+            force_paths=force_paths,
             enable_quality_judge=enable_quality_judge,
             quality_judge_model=quality_judge_model,
         )

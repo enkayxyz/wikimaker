@@ -29,6 +29,7 @@ except Exception:  # pragma: no cover
 
     trace = _NoopTrace()  # type: ignore[assignment]
 
+from wikimaker_cards import run_map_reduce_pipeline
 from wikimaker_openai import GenerationPlan, AnalysisPlan, VerificationPlan, preflight_llm_endpoint, run_pipeline
 from wikimaker_config import WikiMakerConfig
 from wikimaker_discovery import write_discovery_views, _source_stub_name, _wiki_set_dir_name
@@ -52,6 +53,7 @@ def ensure_workspace(config: WikiMakerConfig) -> None:
     (config.output_root / "sources").mkdir(parents=True, exist_ok=True)
     (config.output_root / "wiki-sets").mkdir(parents=True, exist_ok=True)
     (config.output_root / "browser").mkdir(parents=True, exist_ok=True)
+    (config.telemetry_root / "pages").mkdir(parents=True, exist_ok=True)
 
 
 def write_change_report(
@@ -136,6 +138,35 @@ def _relationship_maps(source_pages: list[dict[str, Any]]) -> tuple[dict[str, li
             if source_title not in linked_from[target_path]:
                 linked_from[target_path].append(source_title)
     return links_to, linked_from
+
+
+def _write_page_telemetry(config: WikiMakerConfig, page_id: str, payload: dict[str, Any]) -> str:
+    safe = _safe_page_name(page_id)
+    path = config.telemetry_root / "pages" / f"{safe}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return str(Path("pages") / path.name)
+
+
+def _build_telemetry_lines(config: WikiMakerConfig, page_id: str, build: dict[str, Any]) -> list[str]:
+    telemetry_rel = _write_page_telemetry(config, page_id, build)
+    warnings = build.get("warnings") or []
+    warning_text = ", ".join(str(item) for item in warnings[:3]) if warnings else "none"
+    return [
+        "",
+        "## Build telemetry",
+        f"- Run ID: `{build.get('run_id', '')}`",
+        f"- Source hash: `{build.get('source_sha256', '')}`",
+        f"- Cache status: `{build.get('cache_status', '')}`",
+        f"- Card schema: `{build.get('card_schema_version', '')}`",
+        f"- Prompt version: `{build.get('prompt_version', '')}`",
+        f"- Model: `{build.get('model', '')}`",
+        f"- Synthesis stage: `{build.get('synthesis_stage', '')}`",
+        f"- Input cards: `{build.get('input_card_count', '')}`",
+        f"- Confidence: `{build.get('confidence', '')}`",
+        f"- Warnings: `{warning_text}`",
+        f"- Telemetry: `../telemetry/{telemetry_rel}`",
+    ]
 
 
 def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[str, list[str]], generation: dict[str, Any]) -> list[Path]:
@@ -272,6 +303,12 @@ def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict
             content.extend(f"- {item}" for item in used_in)
         else:
             content.append("- _None found_")
+        build = dict(page.get("build") or {})
+        build.setdefault("source_sha256", record.get("sha256", ""))
+        build.setdefault("cache_status", "scan")
+        build.setdefault("synthesis_stage", "source_summary")
+        build.setdefault("input_card_count", 1)
+        content.extend(_build_telemetry_lines(config, rel_path, build))
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("\n".join(content) + "\n", encoding="utf-8")
         written.append(out_path)
@@ -376,6 +413,19 @@ def write_knowledge_pages(config: WikiMakerConfig, pipeline: dict[str, Any], sca
             lines.append("- _None found_")
         if extra_lines:
             lines.extend(["", *extra_lines])
+        build = {
+            "run_id": pipeline.get("stage", {}).get("run_id", ""),
+            "source_sha256": "",
+            "cache_status": "mixed",
+            "card_schema_version": pipeline.get("stage", {}).get("card", {}).get("card_schema_version", ""),
+            "prompt_version": pipeline.get("stage", {}).get("card", {}).get("card_prompt_version", ""),
+            "model": pipeline.get("stage", {}).get("global", {}).get("model", ""),
+            "synthesis_stage": f"{kind}_page",
+            "input_card_count": len(matches),
+            "confidence": analysis.get("confidence", ""),
+            "warnings": [],
+        }
+        lines.extend(_build_telemetry_lines(config, f"{kind}-{label}", build))
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         written.append(out_path)
@@ -573,6 +623,19 @@ def write_wiki_set_pages(config: WikiMakerConfig, pipeline: dict[str, Any], scan
             "## Links",
             "- Source overview is in the individual source-summary pages.",
         ])
+        build = {
+            "run_id": pipeline.get("stage", {}).get("run_id", ""),
+            "source_sha256": "",
+            "cache_status": "mixed",
+            "card_schema_version": pipeline.get("stage", {}).get("card", {}).get("card_schema_version", ""),
+            "prompt_version": pipeline.get("stage", {}).get("card", {}).get("card_prompt_version", ""),
+            "model": pipeline.get("stage", {}).get("global", {}).get("model", ""),
+            "synthesis_stage": "wiki_set_page",
+            "input_card_count": len(matching_sources),
+            "confidence": pipeline.get("generation", {}).get("confidence", ""),
+            "warnings": [],
+        }
+        lines.extend(_build_telemetry_lines(config, f"wiki-set-{set_name}", build))
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         written.append(out_path)
@@ -884,6 +947,51 @@ def complete_pipeline_from_scan(scan: dict[str, Any], pipeline: dict[str, Any]) 
     return pipeline
 
 
+def scan_only_pipeline(scan: dict[str, Any]) -> dict[str, Any]:
+    files = scan.get("files", {})
+    pipeline = {
+        "llm_used": False,
+        "provider": "scan",
+        "base_url": "",
+        "errors": ["coverage_fallback used scan-only synthesis; LLM pipeline was skipped"],
+        "analysis": {
+            "corpus_summary": f"Compiled {len(files)} scanned source files without an LLM synthesis pass.",
+            "corpus_kinds": sorted(
+                {
+                    str(record.get("corpus_kind") or "").strip()
+                    for record in files.values()
+                    if isinstance(record, dict) and record.get("corpus_kind")
+                }
+            ),
+            "wiki_sets": [],
+            "source_page_candidates": [],
+            "topic_clusters": [],
+            "entity_clusters": [],
+            "duplicate_clusters": [],
+            "contradiction_clusters": [],
+            "reorg_suggestions": [],
+            "confidence": 0.0,
+        },
+        "generation": {
+            "wiki_set_pages": [],
+            "source_pages": [],
+            "root_index_summary": "",
+            "dashboard_summary": "",
+            "stats_summary": "",
+            "needed_followups": [],
+            "confidence": 0.0,
+        },
+        "verification": {
+            "approved": True,
+            "findings": [],
+            "changes_requested": [],
+            "confidence": 0.0,
+        },
+        "sample_files": 0,
+    }
+    return complete_pipeline_from_scan(scan, pipeline)
+
+
 def _write_dry_run_preview(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[str, list[str]], pipeline: dict[str, Any]) -> Path:
     telemetry_preview = config.telemetry_root / "dry_run_preview.md"
     lines = [
@@ -957,8 +1065,9 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
         root_span.set_attribute("wikimaker.enable_adk_eval", bool(config.enable_adk_eval))
         root_span.set_attribute("wikimaker.dry_run", bool(config.dry_run))
 
-        with tracer.start_as_current_span("wikimaker.preflight"):
-            preflight_llm_endpoint(config.as_dict())
+        if config.synthesis_mode != "coverage_fallback":
+            with tracer.start_as_current_span("wikimaker.preflight"):
+                preflight_llm_endpoint(config.as_dict())
 
         with tracer.start_as_current_span("wikimaker.scan"):
             previous = load_snapshot(config.state_root)
@@ -968,9 +1077,12 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
             diff = diff_snapshots(previous, current)
 
         with tracer.start_as_current_span("wikimaker.pipeline"):
-            pipeline = run_pipeline(scan, diff, config.as_dict())
             if config.synthesis_mode == "coverage_fallback":
-                pipeline = complete_pipeline_from_scan(scan, pipeline)
+                pipeline = scan_only_pipeline(scan)
+            elif config.synthesis_mode == "map_reduce":
+                pipeline = complete_pipeline_from_scan(scan, run_map_reduce_pipeline(scan, diff, config.as_dict()))
+            else:
+                pipeline = run_pipeline(scan, diff, config.as_dict())
             pipeline["privacy"] = endpoint_privacy
 
         with tracer.start_as_current_span("wikimaker.telemetry"):
@@ -983,6 +1095,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
                 "verification_confidence": pipeline.get("verification", {}).get("confidence"),
                 "synthesis_mode": config.synthesis_mode,
             }
+            telemetry["stages"] = pipeline.get("stage", {})
             telemetry["privacy"] = endpoint_privacy
             telemetry["prompt_profiles"] = scan.get("prompt_profiles", {})
             telemetry["observability"] = {

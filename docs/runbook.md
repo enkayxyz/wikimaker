@@ -11,7 +11,10 @@ Put these in `.env`:
 - `WIKIMAKER_LLM_API_STYLE` — `ollama` for the current scaffold
 - `WIKIMAKER_ANALYSIS_MODEL` — model used for stage 1 source-page generation (recommended: your local Gemma 4 E4B MLX model)
 - `WIKIMAKER_REVIEW_MODEL` — model used for stage 3 verification
-- `WIKIMAKER_SYNTHESIS_MODE` — default `llm_only`; do not synthesize links from scan heuristics
+- `WIKIMAKER_SYNTHESIS_MODE` — default `map_reduce`; use cached per-file cards, batch summaries, and a global merge
+- `WIKIMAKER_LLM_BATCH_SIZE` — source-card summaries per merge batch; default `50`
+- `WIKIMAKER_FORCE_REPROCESS` — `1` to regenerate all per-file cards
+- `WIKIMAKER_FORCE_PATHS` — comma-separated relative paths or globs to regenerate selected per-file cards
 - `WIKIMAKER_ENABLE_QUALITY_JUDGE` — `1` to run an aggregate-only quality judge after generation
 - `WIKIMAKER_QUALITY_JUDGE_MODEL` — local model for quality judging; defaults to review model
 - The default local Ollama endpoint uses localhost, so the code can run without any external LLM dependency
@@ -35,11 +38,12 @@ OPENAI_BASE_URL=http://127.0.0.1:11434
 WIKIMAKER_ANALYSIS_MODEL=gemma4:e4b-mlx
 WIKIMAKER_GENERATION_MODEL=gemma4:e4b-mlx
 WIKIMAKER_REVIEW_MODEL=gemma4:e4b-mlx
-WIKIMAKER_SYNTHESIS_MODE=llm_only
+WIKIMAKER_SYNTHESIS_MODE=map_reduce
+WIKIMAKER_LLM_BATCH_SIZE=50
 WIKIMAKER_ENABLE_QUALITY_JUDGE=1
 ```
 
-Use your local Ollama models for the stage 1 source-page pass, stage 2 commonality pass, and stage 3 verification pass.
+Use your local Ollama models for per-file source cards, batch summaries, the global merge pass, and optional aggregate quality judging.
 
 If Ollama is running on another machine, replace `127.0.0.1` with that machine's IP or hostname in `OPENAI_BASE_URL`.
 
@@ -79,6 +83,9 @@ Optional flags may override env vars:
 - `--allow-remote-llm`
 - `--prompt-profile`
 - `--synthesis-mode`
+- `--llm-batch-size`
+- `--force-reprocess`
+- `--force-path`
 - `--enable-quality-judge` / `--no-enable-quality-judge`
 - `--quality-judge-model`
 

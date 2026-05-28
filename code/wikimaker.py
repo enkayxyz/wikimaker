@@ -25,11 +25,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--adk-trace-db", help="SQLite DB path for ADK trace storage")
     parser.add_argument("--adk-eval-dir", help="Directory for ADK eval artifacts")
     parser.add_argument("--sample-files", type=int, help="Maximum number of files to include in the model prompt sample window")
+    parser.add_argument("--llm-batch-size", type=int, help="Number of per-file cards to include in each merge batch")
     parser.add_argument("--progress-every", type=int, help="Print a scan progress line every N files")
     parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=None, help="Run without future write actions")
     parser.add_argument("--allow-remote-llm", action=argparse.BooleanOptionalAction, default=None, help="Allow remote model endpoints after privacy classification")
     parser.add_argument("--prompt-profile", help="Optional wikimaker prompt profile JSON/YAML path")
-    parser.add_argument("--synthesis-mode", choices=["llm_only", "coverage_fallback"], help="Use LLM-only wiki synthesis, or opt into scan coverage fallback")
+    parser.add_argument("--synthesis-mode", choices=["map_reduce", "llm_only", "coverage_fallback"], help="Use cached per-file map/reduce synthesis, legacy LLM-only synthesis, or scan coverage fallback")
+    parser.add_argument("--force-reprocess", action=argparse.BooleanOptionalAction, default=None, help="Regenerate all per-file LLM cards")
+    parser.add_argument("--force-path", action="append", default=None, help="Regenerate per-file LLM cards for a relative path or glob; repeatable")
     parser.add_argument("--enable-quality-judge", action=argparse.BooleanOptionalAction, default=None, help="Run a redacted aggregate quality judge after synthesis")
     parser.add_argument("--quality-judge-model", help="Local model used for the redacted aggregate quality judge")
     return parser.parse_args(argv)
@@ -53,11 +56,14 @@ def main(argv: list[str] | None = None) -> int:
             adk_trace_db=args.adk_trace_db,
             adk_eval_dir=args.adk_eval_dir,
             sample_files=args.sample_files,
+            llm_batch_size=args.llm_batch_size,
             progress_every=args.progress_every,
             dry_run=args.dry_run,
             allow_remote_llm=args.allow_remote_llm,
             prompt_profile_path=args.prompt_profile,
             synthesis_mode=args.synthesis_mode,
+            force_reprocess=args.force_reprocess,
+            force_paths=args.force_path,
             enable_quality_judge=args.enable_quality_judge,
             quality_judge_model=args.quality_judge_model,
         )

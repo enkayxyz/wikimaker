@@ -77,6 +77,14 @@ def deterministic_quality(metrics: dict[str, Any]) -> dict[str, Any]:
 def run_redacted_quality_judge(metrics: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     if not config.get("enable_quality_judge", True):
         return {"used": False, "status": "disabled", "findings": [], "recommendation": "Quality judge disabled."}
+    if str(config.get("synthesis_mode") or "").strip() == "coverage_fallback":
+        fallback = deterministic_quality(metrics)
+        return {
+            "used": False,
+            "status": fallback["status"],
+            "findings": fallback["findings"],
+            "recommendation": "Coverage fallback is scan-only; skipped the LLM judge and used deterministic aggregate checks.",
+        }
     judge_model = str(config.get("quality_judge_model") or config.get("review_model") or config.get("analysis_model") or "").strip()
     if not judge_model:
         return {"used": False, "status": "skipped", "findings": ["No quality judge model configured."], "recommendation": "Set WIKIMAKER_QUALITY_JUDGE_MODEL or WIKIMAKER_REVIEW_MODEL."}

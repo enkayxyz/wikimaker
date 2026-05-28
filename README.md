@@ -89,7 +89,10 @@ Suggested environment variables:
 - `WIKIMAKER_ADK_EVAL_DIR`
 - `WIKIMAKER_ALLOW_REMOTE_LLM`
 - `WIKIMAKER_PROMPT_PROFILE`
-- `WIKIMAKER_SYNTHESIS_MODE` — default `llm_only`; `coverage_fallback` is an explicit experiment
+- `WIKIMAKER_SYNTHESIS_MODE` — default `map_reduce`; `coverage_fallback` is the offline scan-only path and `llm_only` is the legacy one-shot mode
+- `WIKIMAKER_LLM_BATCH_SIZE`
+- `WIKIMAKER_FORCE_REPROCESS`
+- `WIKIMAKER_FORCE_PATHS`
 - `WIKIMAKER_ENABLE_QUALITY_JUDGE`
 - `WIKIMAKER_QUALITY_JUDGE_MODEL`
 - `OPENAI_BASE_URL` - OpenAI-compatible endpoint for this machine; use `127.0.0.1` only when Ollama is local
@@ -101,6 +104,7 @@ Recommended local setup:
 - API style: `ollama`
 - base URL: `http://127.0.0.1:11434` when Ollama runs on the same machine
 - analysis/generation/review model: your local Gemma 4 E4B model, if available
+- synthesis mode: `map_reduce` for cached per-file cards and summary merge passes
 
 ## How to run
 
