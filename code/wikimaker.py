@@ -27,11 +27,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sample-files", type=int, help="Maximum number of files to include in the model prompt sample window")
     parser.add_argument("--llm-batch-size", type=int, help="Number of per-file cards to include in each merge batch")
     parser.add_argument("--test-limit", type=int, help="Limit run to the first N Markdown files after sorting")
+    parser.add_argument("--card-mode", choices=["metadata", "sampled", "deep", "original"], help="How much source text card enrichment may include; default metadata")
     parser.add_argument("--progress-every", type=int, help="Print a scan progress line every N files")
     parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=None, help="Run without future write actions")
     parser.add_argument("--allow-remote-llm", action=argparse.BooleanOptionalAction, default=None, help="Allow remote model endpoints after privacy classification")
     parser.add_argument("--prompt-profile", help="Optional wikimaker prompt profile JSON/YAML path")
-    parser.add_argument("--synthesis-mode", choices=["map_reduce", "llm_only", "coverage_fallback"], help="Use cached per-file map/reduce synthesis, legacy LLM-only synthesis, or scan coverage fallback")
+    parser.add_argument("--synthesis-mode", choices=["adk_workflow", "map_reduce", "llm_only", "coverage_fallback"], help="Use ADK workflow synthesis, cached map/reduce, legacy LLM-only, or scan coverage fallback")
     parser.add_argument("--force-reprocess", action=argparse.BooleanOptionalAction, default=None, help="Regenerate all per-file LLM cards")
     parser.add_argument("--force-path", action="append", default=None, help="Regenerate per-file LLM cards for a relative path or glob; repeatable")
     parser.add_argument("--enable-quality-judge", action=argparse.BooleanOptionalAction, default=None, help="Run a redacted aggregate quality judge after synthesis")
@@ -59,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             sample_files=args.sample_files,
             llm_batch_size=args.llm_batch_size,
             test_limit=args.test_limit,
+            card_mode=args.card_mode,
             progress_every=args.progress_every,
             dry_run=args.dry_run,
             allow_remote_llm=args.allow_remote_llm,

@@ -12,17 +12,29 @@ from pydantic import BaseModel, Field
 
 from wikimaker_llm_monitor import monitored_call, sanitize_error
 from wikimaker_openai import _chat_completions, _parse_model_output, _require_local_llm_config
+from wikimaker_source_card import (
+    SOURCE_CARD_PROMPT_VERSION,
+    SOURCE_CARD_SCHEMA_VERSION,
+    SourceCard,
+    source_card_id,
+    source_card_json_name,
+    source_card_markdown_name,
+    source_card_to_source_page,
+    source_facts_from_record,
+    write_source_card_artifacts,
+)
 from wikimaker_state import hash_text
 
 
-CARD_SCHEMA_VERSION = "card.v1"
-CARD_PROMPT_VERSION = "card_prompt.v1"
+CARD_SCHEMA_VERSION = SOURCE_CARD_SCHEMA_VERSION
+CARD_PROMPT_VERSION = SOURCE_CARD_PROMPT_VERSION
 BATCH_PROMPT_VERSION = "batch_prompt.v1"
 GLOBAL_PROMPT_VERSION = "global_prompt.v1"
 CARD_INDEX_FILENAME = "card_index.json"
 
 
 class FileAnalysisCard(BaseModel):
+    id: str = ""
     path: str
     title: str = ""
     page_role: str = "knowledge_page"
@@ -37,6 +49,7 @@ class FileAnalysisCard(BaseModel):
     source_quality: str = "ok"
     warnings: list[str] = Field(default_factory=list)
     confidence: float = 0.5
+    tags: list[str] = Field(default_factory=list)
 
 
 class BatchSynthesis(BaseModel):
@@ -89,11 +102,12 @@ def _card_signature(rel_path: str, record: dict[str, Any], config: dict[str, Any
         "provider": config.get("provider", "ollama"),
         "model": config.get("analysis_model", ""),
         "profile_hash": _profile_hash(record),
+        "card_mode": config.get("card_mode", "metadata"),
     }
 
 
 def _card_path(state_root: Path, rel_path: str) -> Path:
-    return state_root / "cards" / f"{_safe_id(rel_path)}.json"
+    return state_root / "cards" / source_card_json_name(rel_path)
 
 
 def _read_card(path: Path) -> dict[str, Any] | None:
@@ -116,32 +130,31 @@ def _matches_force_path(rel_path: str, patterns: list[str]) -> bool:
 
 
 def _fallback_card(rel_path: str, record: dict[str, Any], *, reason: str = "") -> FileAnalysisCard:
-    title = str(record.get("title") or Path(rel_path).stem)
-    corpus_kind = str(record.get("corpus_kind") or record.get("source_kind") or "mixed_notes")
-    headings = [str(item).lstrip("#").strip() for item in (record.get("headings") or [])[:4] if str(item).strip()]
-    topics = [corpus_kind.replace("_", " ").title()]
-    topics.extend(item for item in headings if item not in topics)
+    facts = source_facts_from_record(rel_path, record)
     warnings = [reason] if reason else []
     source_quality = "llm_failed" if reason else "scan_fallback"
     return FileAnalysisCard(
+        id=facts["id"],
         path=rel_path,
-        title=title,
-        page_role="thread_page" if "chat" in corpus_kind else "knowledge_page",
-        summary=f"{title}. Source file classified as {corpus_kind.replace('_', ' ')}.",
-        source_kind=str(record.get("source_kind") or corpus_kind),
-        corpus_kind=corpus_kind,
-        topics=topics[:8],
-        entities=[],
-        dates=[str(record.get("extracted_at"))] if record.get("extracted_at") else [],
-        amounts=[],
-        candidate_links=[],
+        title=facts["title"],
+        page_role=facts["page_role"],
+        summary=facts["summary"],
+        source_kind=facts["source_kind"],
+        corpus_kind=facts["corpus_kind"],
+        topics=facts["topics"],
+        entities=facts["entities"],
+        dates=facts["dates"],
+        amounts=facts["amounts"],
+        candidate_links=facts["candidate_links"],
         source_quality=source_quality,
         warnings=warnings,
         confidence=0.0 if reason else 0.35,
+        tags=facts["tags"],
     )
 
 
 def _file_prompt(rel_path: str, record: dict[str, Any], text: str) -> str:
+    card_mode = str(record.get("_card_mode") or "metadata")
     compact = {
         "path": rel_path,
         "title": record.get("title"),
@@ -151,13 +164,19 @@ def _file_prompt(rel_path: str, record: dict[str, Any], text: str) -> str:
         "headings": (record.get("headings") or [])[:20],
         "source_links": (record.get("source_links") or [])[:20],
         "prompt_profile": record.get("prompt_profile") or {},
+        "deterministic_facts": source_facts_from_record(rel_path, record),
+        "card_mode": card_mode,
     }
+    source_section = ""
+    if card_mode in {"sampled", "deep", "original"}:
+        limit = 2000 if card_mode == "sampled" else 12000
+        source_section = f"\n\nSOURCE_MARKDOWN_EXCERPT:\n{text[:limit]}"
     return (
-        "Analyze exactly one Markdown source file for WikiMaker. Return strict JSON matching this shape: "
+        "Enrich one WikiMaker SourceCard using the deterministic facts first. Return strict JSON matching this shape: "
         "path, title, page_role, summary, source_kind, corpus_kind, topics, entities, dates, amounts, "
-        "candidate_links, source_quality, warnings, confidence. Keep it compact and provenance-first.\n\n"
-        f"SCAN_METADATA_JSON:\n{json.dumps(compact, indent=2, sort_keys=True)}\n\n"
-        f"SOURCE_MARKDOWN_EXCERPT:\n{text[:12000]}"
+        "candidate_links, source_quality, warnings, confidence, tags. Keep it compact and provenance-first.\n\n"
+        f"SCAN_METADATA_JSON:\n{json.dumps(compact, indent=2, sort_keys=True)}"
+        f"{source_section}"
     )
 
 
@@ -182,8 +201,10 @@ def _card_from_llm(
     total: int,
     cache_status: str,
 ) -> FileAnalysisCard:
-    text = _load_source_excerpt(corpus_root, rel_path)
-    prompt = _file_prompt(rel_path, record, text)
+    card_mode = str(config.get("card_mode") or "metadata").strip().lower()
+    text = "" if card_mode == "metadata" else _load_source_excerpt(corpus_root, rel_path)
+    prompt_record = {**record, "_card_mode": card_mode}
+    prompt = _file_prompt(rel_path, prompt_record, text)
     timeout = int(config.get("llm_file_timeout", 120) or 120)
     response = monitored_call(
         config,
@@ -213,22 +234,71 @@ def _card_from_llm(
     )
     card = _parse_model_output(response, FileAnalysisCard)
     data = card.model_dump()
+    facts = source_facts_from_record(rel_path, record)
+    data["id"] = data.get("id") or facts["id"]
     data["path"] = rel_path
     data["title"] = data.get("title") or record.get("title") or Path(rel_path).stem
     data["source_kind"] = data.get("source_kind") or record.get("source_kind") or record.get("corpus_kind") or ""
     data["corpus_kind"] = data.get("corpus_kind") or record.get("corpus_kind") or "mixed_notes"
+    data["tags"] = data.get("tags") or facts["tags"]
+    data["topics"] = data.get("topics") or facts["topics"]
+    data["dates"] = data.get("dates") or facts["dates"]
+    data["amounts"] = data.get("amounts") or facts["amounts"]
     return FileAnalysisCard(**data)
 
 
 def _stored_card(signature: dict[str, Any], card: FileAnalysisCard, *, status: str, duration_ms: int, error: str = "") -> dict[str, Any]:
+    card_data = card.model_dump()
     return {
         "signature": signature,
-        "card": card.model_dump(),
+        "card": card_data,
+        "id": card_data.get("id") or source_card_id(card_data.get("path", "")),
         "cache_status": status,
         "generated_at": _utc_now(),
         "duration_ms": duration_ms,
         "error": error,
     }
+
+
+def _source_card_from_stored(stored: dict[str, Any], record: dict[str, Any], config: dict[str, Any]) -> SourceCard:
+    card = dict(stored.get("card") or {})
+    signature = dict(stored.get("signature") or {})
+    rel_path = str(card.get("path") or signature.get("path") or "")
+    facts = source_facts_from_record(rel_path, record)
+    build = {
+        "run_id": str(config.get("run_id") or ""),
+        "source_sha256": signature.get("source_sha256", record.get("sha256", "")),
+        "cache_status": stored.get("cache_status", ""),
+        "card_schema_version": CARD_SCHEMA_VERSION,
+        "prompt_version": CARD_PROMPT_VERSION,
+        "model": signature.get("model", config.get("analysis_model", "")),
+        "synthesis_stage": "source_card",
+        "input_card_count": 1,
+        "confidence": card.get("confidence", 0.0),
+        "warnings": card.get("warnings", []),
+        "card_mode": signature.get("card_mode", config.get("card_mode", "metadata")),
+        "original_source_included": str(signature.get("card_mode", config.get("card_mode", "metadata"))) in {"deep", "original"},
+    }
+    return SourceCard(
+        id=str(card.get("id") or facts["id"]),
+        path=rel_path,
+        title=str(card.get("title") or facts["title"]),
+        page_role=str(card.get("page_role") or facts["page_role"]),
+        summary=str(card.get("summary") or facts["summary"]),
+        source_kind=str(card.get("source_kind") or facts["source_kind"]),
+        corpus_kind=str(card.get("corpus_kind") or facts["corpus_kind"]),
+        tags=list(card.get("tags") or facts["tags"]),
+        topics=list(card.get("topics") or facts["topics"]),
+        entities=list(card.get("entities") or facts["entities"]),
+        dates=list(card.get("dates") or facts["dates"]),
+        amounts=list(card.get("amounts") or facts["amounts"]),
+        links=list(card.get("links") or facts["links"]),
+        candidate_links=list(card.get("candidate_links") or facts["candidate_links"]),
+        source_quality=str(card.get("source_quality") or facts["source_quality"]),
+        warnings=list(card.get("warnings") or []),
+        confidence=float(card.get("confidence", facts["confidence"]) or 0.0),
+        build=build,
+    )
 
 
 def build_file_cards(scan: dict[str, Any], config: dict[str, Any], diff: dict[str, list[str]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -286,6 +356,7 @@ def build_file_cards(scan: dict[str, Any], config: dict[str, Any], diff: dict[st
                 counts["misses"] += 1
         index["cards"][rel_path] = {
             "cache_file": str(Path("cards") / cache_path.name),
+            "source_page": str(Path("sources") / source_card_markdown_name(rel_path)),
             "valid": True,
             "source_sha256": signature["source_sha256"],
             "schema_version": CARD_SCHEMA_VERSION,
@@ -293,6 +364,8 @@ def build_file_cards(scan: dict[str, Any], config: dict[str, Any], diff: dict[st
             "model": model,
             "cache_status": cards[-1].get("cache_status"),
         }
+        source_card = _source_card_from_stored(cards[-1], record, config)
+        write_source_card_artifacts(state_root, Path(str(config.get("output_root") or ".")), source_card, write_json=False)
     index_path = state_root / CARD_INDEX_FILENAME
     index_path.write_text(json.dumps(index, indent=2, sort_keys=True), encoding="utf-8")
     stage = {
@@ -318,12 +391,14 @@ def _card_public(card_payload: dict[str, Any]) -> dict[str, Any]:
     signature = dict(card_payload.get("signature") or {})
     return {
         "path": card.get("path"),
+        "id": card.get("id") or card_payload.get("id"),
         "title": card.get("title"),
         "summary": card.get("summary"),
         "page_role": card.get("page_role"),
         "source_kind": card.get("source_kind"),
         "corpus_kind": card.get("corpus_kind"),
         "topics": card.get("topics", []),
+        "tags": card.get("tags", []),
         "entities": card.get("entities", []),
         "dates": card.get("dates", []),
         "amounts": card.get("amounts", []),
@@ -524,40 +599,25 @@ def pipeline_from_cards(scan: dict[str, Any], cards: list[dict[str, Any]], batch
         card = dict(payload.get("card") or {})
         signature = dict(payload.get("signature") or {})
         rel_path = str(card.get("path") or "")
-        source_pages.append(
+        source_card = _source_card_from_stored({**payload, "cache_status": payload.get("cache_status", "")}, {}, {"run_id": stage.get("run_id", "")})
+        page = source_card_to_source_page(source_card)
+        page["build"].update(
             {
-                "path": rel_path,
-                "title": card.get("title") or Path(rel_path).stem,
-                "page_role": card.get("page_role") or "knowledge_page",
-                "summary": card.get("summary") or "",
-                "platform": "",
-                "source_kind": card.get("source_kind") or card.get("corpus_kind") or "",
-                "corpus_kind": card.get("corpus_kind") or "mixed_notes",
-                "extracted_at": "",
-                "source_url": "",
-                "source_paths": [rel_path] if rel_path else [],
-                "external_links": [],
-                "tags": [card.get("corpus_kind")] if card.get("corpus_kind") else [],
-                "topics": card.get("topics", []),
-                "entities": card.get("entities", []),
-                "related_pages": card.get("candidate_links", []),
-                "used_in": [],
-                "key_snippets": [],
-                "breadcrumbs": list(Path(rel_path).parts[:-1]) if rel_path else [],
-                "build": {
-                    "run_id": stage.get("run_id", ""),
-                    "source_sha256": signature.get("source_sha256", ""),
-                    "cache_status": payload.get("cache_status", ""),
-                    "card_schema_version": CARD_SCHEMA_VERSION,
-                    "prompt_version": CARD_PROMPT_VERSION,
-                    "model": signature.get("model", ""),
-                    "synthesis_stage": "per_file_card",
-                    "input_card_count": 1,
-                    "confidence": card.get("confidence", 0.0),
-                    "warnings": card.get("warnings", []),
-                },
+                "run_id": stage.get("run_id", ""),
+                "source_sha256": signature.get("source_sha256", ""),
+                "cache_status": payload.get("cache_status", ""),
+                "card_schema_version": CARD_SCHEMA_VERSION,
+                "prompt_version": CARD_PROMPT_VERSION,
+                "model": signature.get("model", ""),
+                "synthesis_stage": "source_card",
+                "input_card_count": 1,
+                "confidence": card.get("confidence", 0.0),
+                "warnings": card.get("warnings", []),
+                "card_mode": signature.get("card_mode", "metadata"),
+                "original_source_included": str(signature.get("card_mode", "metadata")) in {"deep", "original"},
             }
         )
+        source_pages.append(page)
     pipeline = {
         "llm_used": True,
         "provider": "map_reduce",

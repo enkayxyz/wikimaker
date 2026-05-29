@@ -8,6 +8,7 @@ from typing import Any
 
 from wikimaker_config import WikiMakerConfig
 from wikimaker_discovery import build_discovery_views, _source_stub_name, _wiki_set_dir_name
+from wikimaker_source_card import source_card_markdown_name
 from wikimaker_privacy import browser_network_posture, classify_endpoint_privacy
 
 
@@ -55,8 +56,8 @@ def _browser_payload(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[s
         page_role = str(page.get("page_role") or node.get("page_role") or "knowledge_page").strip().lower()
         page_payload = {
             **page,
-            "source_stub": _source_stub_name(rel_path) if rel_path else "",
-            "source_page_href": f"../sources/{_source_stub_name(rel_path)}" if rel_path else "",
+            "source_stub": str(page.get("source_page_filename") or source_card_markdown_name(rel_path)) if rel_path else "",
+            "source_page_href": f"../sources/{page.get('source_page_filename') or source_card_markdown_name(rel_path)}" if rel_path else "",
             "rank": node.get("rank", 0),
             "score": node.get("score", 0),
             "backlinks": node.get("backlinks", 0),
@@ -107,8 +108,8 @@ def _browser_payload(config: WikiMakerConfig, scan: dict[str, Any], diff: dict[s
                 "platform": str(semantic.get("platform") or record.get("platform") or "").strip(),
                 "extracted_at": str(semantic.get("extracted_at") or record.get("extracted_at") or "").strip(),
                 "page_role": str(semantic.get("page_role") or node.get("page_role") or "").strip(),
-                "source_stub": _source_stub_name(rel_path),
-                "source_page_href": f"../sources/{_source_stub_name(rel_path)}",
+                "source_stub": str(semantic.get("source_page_filename") or source_card_markdown_name(rel_path)),
+                "source_page_href": f"../sources/{semantic.get('source_page_filename') or source_card_markdown_name(rel_path)}",
                 "tags": semantic.get("tags", []),
                 "topics": semantic.get("topics", []),
                 "entities": semantic.get("entities", []),

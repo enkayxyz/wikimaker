@@ -30,12 +30,12 @@ WikiMaker:
 
 Current stack:
 - Python 3.11+
-- Google ADK 2 for orchestration and observability
+- Google ADK 2 workflow orchestration and observability
 - local OpenAI-compatible API surface for model calls
 - Ollama on localhost as the default inference backend
 - static Markdown outputs plus a local browser frontend
 - pytest / unittest smoke coverage
-- optional local ADK tracing and evaluation hooks
+- local ADK tracing and evaluation hooks
 
 Important implementation facts:
 - ADK import namespace: `google.adk`
@@ -43,8 +43,10 @@ Important implementation facts:
 - local inference endpoint: `http://127.0.0.1:11434`
 - Python runtime: 3.11 or newer
 - real-corpus runs are intentionally local-only
-- map/reduce synthesis caches one per-file LLM card and reuses unchanged cards across runs
-- coverage fallback is available for scan-only/offline runs; `llm_only` is retained as a legacy debug mode
+- ADK workflow synthesis owns scan, source-card, batch, global, quality, and render stages
+- source cards are canonical and render to both `state/cards/*.json` and `output/sources/*.md`
+- default source-card mode is metadata-first; original/full source text is opt-in with `WIKIMAKER_CARD_MODE=sampled|deep|original`
+- `map_reduce` and `llm_only` are retained as legacy debug modes; `coverage_fallback` remains scan-only/offline
 
 Main code paths:
 - `code/wikimaker_scanner.py`
@@ -89,7 +91,8 @@ Suggested environment variables:
 - `WIKIMAKER_ADK_EVAL_DIR`
 - `WIKIMAKER_ALLOW_REMOTE_LLM`
 - `WIKIMAKER_PROMPT_PROFILE`
-- `WIKIMAKER_SYNTHESIS_MODE` — default `map_reduce`; `coverage_fallback` is the offline scan-only path and `llm_only` is the legacy one-shot mode
+- `WIKIMAKER_SYNTHESIS_MODE` — default `adk_workflow`; `map_reduce` and `llm_only` are legacy debug modes
+- `WIKIMAKER_CARD_MODE` — default `metadata`; use `sampled`, `deep`, or `original` only for opt-in source-text enrichment
 - `WIKIMAKER_LLM_BATCH_SIZE`
 - `WIKIMAKER_LLM_DEBUG` — `1` prints safe `llm start/done/fail` progress lines
 - `WIKIMAKER_LLM_PREFLIGHT_TIMEOUT`
@@ -111,7 +114,7 @@ Recommended local setup:
 - API style: `ollama`
 - base URL: `http://127.0.0.1:11434` when Ollama runs on the same machine
 - analysis/generation/review model: your local Gemma 4 E4B model, if available
-- synthesis mode: `map_reduce` for cached per-file cards and summary merge passes
+- synthesis mode: `adk_workflow` for ADK-owned source-card, batch, global, quality, and render stages
 
 ## How to run
 
@@ -219,7 +222,7 @@ Common output paths:
 - `_llm_quality.md` — aggregate-only LLM output quality report
 - `_health.md` — wiki lint/health findings
 - `browser/index.html` — local browser frontend
-- `sources/` — one source-summary page per Markdown file
+- `sources/` — one SourceCard Markdown page per Markdown file, sharing its id/data with `state/cards/*.json`
 - `wiki-sets/` — wiki-set pages and indexes
 - `folders/` — folder-level `gist.md` and `ledger.md`
 - `state/corpus_snapshot.json` — change tracking snapshot
@@ -289,10 +292,10 @@ What works now:
 - corpus-kind inference
 - local LLM config validation and hard-fail behavior for non-local endpoints
 - prompt schemas for analysis, generation, and verification
-- source-summary stubs
+- canonical SourceCard JSON and Markdown pages
 - root index, dashboard, stats, search, graph, and browser outputs
 - telemetry and change-report generation
-- optional ADK tracing and local eval hooks
+- ADK workflow stage telemetry, tracing, and local eval hooks
 - discovery views and browser ranking for browsing the generated wiki
 - smoke tests covering config, scanning, prompts, discovery, browser, and telemetry
 

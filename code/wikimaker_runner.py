@@ -29,6 +29,7 @@ except Exception:  # pragma: no cover
 
     trace = _NoopTrace()  # type: ignore[assignment]
 
+from wikimaker_adk_workflow import run_adk_workflow_pipeline
 from wikimaker_cards import run_map_reduce_pipeline
 from wikimaker_llm_monitor import summarize_llm_calls
 from wikimaker_openai import GenerationPlan, AnalysisPlan, VerificationPlan, preflight_llm_endpoint, run_pipeline
@@ -41,6 +42,7 @@ from wikimaker_privacy import browser_network_posture, classify_endpoint_privacy
 from wikimaker_profiles import apply_prompt_profiles
 from wikimaker_quality import build_quality_report, write_quality_report
 from wikimaker_scanner import scan_corpus
+from wikimaker_source_card import source_card_markdown_name
 from wikimaker_state import diff_snapshots, load_snapshot, save_snapshot
 from wikimaker_telemetry import build_telemetry, write_telemetry
 
@@ -164,6 +166,8 @@ def _build_telemetry_lines(config: WikiMakerConfig, page_id: str, build: dict[st
         f"- Model: `{build.get('model', '')}`",
         f"- Synthesis stage: `{build.get('synthesis_stage', '')}`",
         f"- Input cards: `{build.get('input_card_count', '')}`",
+        f"- Card mode: `{build.get('card_mode', '')}`",
+        f"- Original source included: `{build.get('original_source_included', False)}`",
         f"- Confidence: `{build.get('confidence', '')}`",
         f"- Warnings: `{warning_text}`",
         f"- Telemetry: `../telemetry/{telemetry_rel}`",
@@ -180,11 +184,13 @@ def write_source_stubs(config: WikiMakerConfig, scan: dict[str, Any], diff: dict
         if record.get("error"):
             continue
         page = generation_by_path.get(rel_path, {})
-        out_path = config.output_root / "sources" / _source_stub_name(rel_path)
+        out_path = config.output_root / "sources" / str(page.get("source_page_filename") or source_card_markdown_name(rel_path))
         content = [
             f"# {page.get('title') or record.get('title') or Path(rel_path).stem}",
             "",
             f"- Source markdown: `{rel_path}`",
+            f"- Card ID: `{page.get('id') or ''}`",
+            f"- Card JSON: `{page.get('card_json_filename') or ''}`",
             f"- SHA256: `{record.get('sha256')}`",
             f"- Size: `{record.get('size')}`",
             f"- Status: `{_status_for(rel_path, diff)}`",
@@ -366,7 +372,7 @@ def write_knowledge_pages(config: WikiMakerConfig, pipeline: dict[str, Any], sca
         if matches:
             for page in matches[:30]:
                 rel_path = str(page.get("path") or "")
-                stub = _source_stub_name(rel_path) if rel_path else ""
+                stub = str(page.get("source_page_filename") or source_card_markdown_name(rel_path)) if rel_path else ""
                 source_link = f"../../sources/{stub}" if stub else ""
                 lines.append(f"- `{rel_path}`" + (f" — [source summary]({source_link})" if source_link else ""))
         else:
@@ -550,7 +556,7 @@ def write_root_index(config: WikiMakerConfig, pipeline: dict[str, Any]) -> Path:
             if status:
                 provenance_bits.append(status)
             provenance = ", ".join(bit for bit in provenance_bits if bit)
-            stub_name = _source_stub_name(rel_path) if rel_path else ""
+            stub_name = str(page.get("source_page_filename") or source_card_markdown_name(rel_path)) if rel_path else ""
             stub_link = f"[source stub](sources/{stub_name})" if stub_name else "_None_"
             source_markdown = f"`{rel_path}`" if rel_path else "_Unknown_"
             source_link = str(page.get("source_url") or page.get("external_link") or page.get("original_source_url") or "").strip()
@@ -1084,6 +1090,8 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
         with tracer.start_as_current_span("wikimaker.pipeline"):
             if config.synthesis_mode == "coverage_fallback":
                 pipeline = scan_only_pipeline(scan)
+            elif config.synthesis_mode == "adk_workflow":
+                pipeline = run_adk_workflow_pipeline(scan, diff, config.as_dict(), complete_pipeline_from_scan)
             elif config.synthesis_mode == "map_reduce":
                 pipeline = complete_pipeline_from_scan(scan, run_map_reduce_pipeline(scan, diff, config.as_dict()))
             else:

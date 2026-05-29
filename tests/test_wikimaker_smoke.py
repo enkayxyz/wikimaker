@@ -25,6 +25,7 @@ from wikimaker_health import build_wiki_health, write_health_report
 from wikimaker_llm_monitor import monitored_call
 from wikimaker_runner import run, write_source_stubs, write_root_index, write_knowledge_pages, write_privacy_report
 from wikimaker_scanner import scan_corpus
+from wikimaker_source_card import source_card_markdown_name
 from wikimaker_state import diff_snapshots
 from wikimaker_telemetry import build_telemetry
 
@@ -36,6 +37,9 @@ class WikiMakerSmokeTests(unittest.TestCase):
         self.assertEqual(config.output_root, Path("/tmp/corpus-root/wiki-build/output"))
         self.assertEqual(config.state_root, Path("/tmp/corpus-root/wiki-build/state"))
         self.assertEqual(config.telemetry_root, Path("/tmp/corpus-root/wiki-build/telemetry"))
+        self.assertEqual(config.synthesis_mode, "adk_workflow")
+        self.assertTrue(config.use_adk)
+        self.assertEqual(config.card_mode, "metadata")
 
     def test_scan_corpus_can_limit_sorted_markdown_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -384,8 +388,10 @@ Journal entry and reflection about priorities.
             dashboard_text = paths["dashboard"].read_text(encoding="utf-8")
             search_text = paths["search"].read_text(encoding="utf-8")
             self.assertIn("WikiMaker Dashboard", dashboard_text)
-            self.assertIn("| [Beta](sources/notes__b.md) |", dashboard_text)
-            self.assertLess(dashboard_text.index("[Beta](sources/notes__b.md)"), dashboard_text.index("[Alpha](sources/notes__a.md)"))
+            beta_source = source_card_markdown_name("notes/b.md")
+            alpha_source = source_card_markdown_name("notes/a.md")
+            self.assertIn(f"| [Beta](sources/{beta_source}) |", dashboard_text)
+            self.assertLess(dashboard_text.index(f"[Beta](sources/{beta_source})"), dashboard_text.index(f"[Alpha](sources/{alpha_source})"))
             self.assertIn("WikiMaker Stats", paths["stats"].read_text(encoding="utf-8"))
             self.assertIn("WikiMaker Search Index", search_text)
             self.assertIn("## Jump table", search_text)
@@ -422,8 +428,8 @@ Journal entry and reflection about priorities.
             self.assertNotIn("fetch(", browser_text)
 
             source_stubs = write_source_stubs(config, scan, diff, pipeline["generation"])
-            self.assertTrue(any(path.name == "notes__a.md" for path in source_stubs))
-            stub_path = output_root / "sources" / "notes__a.md"
+            self.assertTrue(any(path.name == alpha_source for path in source_stubs))
+            stub_path = output_root / "sources" / alpha_source
             self.assertTrue(stub_path.exists())
             stub_text = stub_path.read_text(encoding="utf-8")
             self.assertIn("## Navigation", stub_text)
@@ -628,7 +634,7 @@ Journal entry and reflection about priorities.
             self.assertIn("Knowledge Page, chat, whatsapp", root_text)
             self.assertIn("Thread Page, chat, whatsapp", root_text)
             self.assertIn("`notes/alpha.md`", root_text)
-            self.assertIn("[source stub](sources/notes__alpha.md)", root_text)
+            self.assertIn(f"[source stub](sources/{source_card_markdown_name('notes/alpha.md')})", root_text)
             self.assertIn("https://example.com/alpha", root_text)
             self.assertIn("https://example.com/beta-thread", root_text)
 
@@ -739,7 +745,8 @@ Journal entry and reflection about priorities.
             self.assertTrue((output_root / "_llm_quality.md").exists())
             self.assertTrue((output_root / "wiki-sets" / "_topics" / "launch-plan.md").exists())
             self.assertTrue((output_root / "wiki-sets" / "_entities" / "acme-corp.md").exists())
-            self.assertTrue((output_root / "sources" / "chats__team.md").exists())
+            team_source = source_card_markdown_name("chats/team.md")
+            self.assertTrue((output_root / "sources" / team_source).exists())
             self.assertTrue((state_root / "corpus_snapshot.json").exists())
             html = (output_root / "browser" / "index.html").read_text(encoding="utf-8")
             self.assertNotIn("fetch(", html)
@@ -751,7 +758,7 @@ Journal entry and reflection about priorities.
             self.assertGreater(browser_data["counts"]["edges"], 0)
             self.assertEqual(browser_data["privacy"]["model_endpoint"]["classification"], "local")
             self.assertEqual(browser_data["privacy"]["browser"]["classification"], "static-local")
-            source_text = (output_root / "sources" / "chats__team.md").read_text(encoding="utf-8")
+            source_text = (output_root / "sources" / team_source).read_text(encoding="utf-8")
             self.assertIn("## Links to", source_text)
             self.assertIn("Invoice 42", source_text)
             self.assertIn("## Linked from", source_text)
@@ -790,8 +797,8 @@ Journal entry and reflection about priorities.
 
             self.assertFalse(result["llm"]["used"])
             self.assertEqual(result["scan"]["total_files"], 2)
-            self.assertTrue((output_root / "sources" / "notes__alpha.md").exists())
-            self.assertTrue((output_root / "sources" / "notes__beta.md").exists())
+            self.assertTrue((output_root / "sources" / source_card_markdown_name("notes/alpha.md")).exists())
+            self.assertTrue((output_root / "sources" / source_card_markdown_name("notes/beta.md")).exists())
             browser_data = json.loads((output_root / "browser" / "data.json").read_text(encoding="utf-8"))
             self.assertEqual(browser_data["counts"]["library_pages"], 2)
             self.assertGreaterEqual(browser_data["counts"]["semantic_source_pages"], 2)
@@ -870,6 +877,7 @@ Journal entry and reflection about priorities.
                 generation_model="mock-generation",
                 review_model="mock-review",
                 synthesis_mode="map_reduce",
+                card_mode="sampled",
                 llm_debug=True,
                 enable_quality_judge=False,
             )
@@ -896,6 +904,7 @@ Journal entry and reflection about priorities.
                 generation_model="mock-generation",
                 review_model="mock-review",
                 synthesis_mode="map_reduce",
+                card_mode="sampled",
                 force_paths=["notes/alpha.md"],
                 enable_quality_judge=False,
             )
@@ -904,7 +913,7 @@ Journal entry and reflection about priorities.
             forced_file_calls = [call for call in force_chat.call_args_list if "SOURCE_MARKDOWN_EXCERPT" in call.args[4][-1]["content"]]
             self.assertEqual(len(forced_file_calls), 1)
             self.assertIn("notes/alpha.md", forced_file_calls[0].args[4][-1]["content"])
-            source_text = (output_root / "sources" / "notes__alpha.md").read_text(encoding="utf-8")
+            source_text = (output_root / "sources" / source_card_markdown_name("notes/alpha.md")).read_text(encoding="utf-8")
             self.assertIn("## Build telemetry", source_text)
             telemetry = json.loads((telemetry_root / "latest.json").read_text(encoding="utf-8"))
             llm_log = (telemetry_root / "llm_calls.jsonl").read_text(encoding="utf-8")
@@ -917,6 +926,68 @@ Journal entry and reflection about priorities.
             self.assertIn(current_call["event"], {"llm_call_done", "llm_call_fail"})
             self.assertIn("stages", telemetry)
             self.assertEqual(telemetry["stages"]["card"]["counts"]["forced"], 1)
+
+    def test_adk_workflow_default_uses_metadata_cards_without_source_excerpt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corpus_root = root / "corpus"
+            output_root = root / "output"
+            state_root = root / "state"
+            telemetry_root = root / "telemetry"
+            corpus_root.mkdir(parents=True, exist_ok=True)
+            (corpus_root / "alpha.md").write_text("# Alpha\n\nThis original body should not be sent by default.\n", encoding="utf-8")
+
+            prompts: list[str] = []
+
+            def fake_chat(_provider: str, _base_url: str, _api_key: str, model: str, messages: list[dict[str, Any]], **_kwargs: Any) -> str:
+                prompt = messages[-1]["content"]
+                prompts.append(prompt)
+                if "BATCH_SUMMARIES_JSON" in prompt:
+                    return json.dumps({"corpus_summary": "Merged alpha.", "wiki_sets": [], "confidence": 0.7})
+                if "CARDS_JSON" in prompt:
+                    return json.dumps({"name": "Batch 1", "summary": "Batch summary", "confidence": 0.7})
+                return json.dumps(
+                    {
+                        "path": "alpha.md",
+                        "title": "Alpha",
+                        "page_role": "knowledge_page",
+                        "summary": "Alpha metadata summary",
+                        "source_kind": "note",
+                        "corpus_kind": "mixed_notes",
+                        "topics": ["Alpha"],
+                        "entities": [],
+                        "dates": [],
+                        "amounts": [],
+                        "candidate_links": [],
+                        "source_quality": "ok",
+                        "warnings": [],
+                        "confidence": 0.7,
+                        "tags": ["mixed_notes"],
+                    }
+                )
+
+            config = WikiMakerConfig(
+                corpus_root=corpus_root,
+                output_root=output_root,
+                state_root=state_root,
+                telemetry_root=telemetry_root,
+                analysis_model="mock-analysis",
+                generation_model="mock-generation",
+                review_model="mock-review",
+                enable_quality_judge=False,
+            )
+            with patch("wikimaker_runner.preflight_llm_endpoint", return_value={}), patch("wikimaker_cards._chat_completions", side_effect=fake_chat):
+                result = run(config)
+            self.assertEqual(result["config"]["synthesis_mode"], "adk_workflow")
+            telemetry = json.loads((telemetry_root / "latest.json").read_text(encoding="utf-8"))
+            self.assertIn("adk_workflow", telemetry["stages"])
+            self.assertFalse(any("SOURCE_MARKDOWN_EXCERPT" in prompt for prompt in prompts))
+            card_path = next((state_root / "cards").glob("*.json"))
+            card_payload = json.loads(card_path.read_text(encoding="utf-8"))
+            self.assertEqual(card_payload["signature"]["card_mode"], "metadata")
+            source_path = output_root / "sources" / source_card_markdown_name("alpha.md")
+            self.assertTrue(source_path.exists())
+            self.assertIn("Original source included: `False`", source_path.read_text(encoding="utf-8"))
 
     def test_failed_file_card_uses_fallback_and_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -944,6 +1015,7 @@ Journal entry and reflection about priorities.
                 generation_model="mock-generation",
                 review_model="mock-review",
                 synthesis_mode="map_reduce",
+                card_mode="sampled",
                 enable_quality_judge=False,
             )
             with patch("wikimaker_runner.preflight_llm_endpoint", return_value={}), patch("wikimaker_cards._chat_completions", side_effect=fake_chat):
@@ -951,7 +1023,7 @@ Journal entry and reflection about priorities.
             self.assertEqual(result["scan"]["total_files"], 1)
             card_payload = json.loads(next((state_root / "cards").glob("*.json")).read_text(encoding="utf-8"))
             self.assertEqual(card_payload["card"]["source_quality"], "llm_failed")
-            self.assertTrue((output_root / "sources" / "notes__alpha.md").exists())
+            self.assertTrue((output_root / "sources" / source_card_markdown_name("notes/alpha.md")).exists())
 
     def test_source_stub_names_are_sanitized_for_weird_paths(self) -> None:
 
@@ -997,7 +1069,7 @@ Journal entry and reflection about priorities.
                 ]
             }
             paths = write_source_stubs(config, scan, diff, generation)
-            expected = _source_stub_name("notes/weird:name?.md")
+            expected = source_card_markdown_name("notes/weird:name?.md")
             self.assertTrue((output_root / "sources" / expected).exists())
 
     def test_helper_reset_deletes_only_generated_roots(self) -> None:

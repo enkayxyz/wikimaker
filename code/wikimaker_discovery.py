@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from wikimaker_config import WikiMakerConfig
+from wikimaker_source_card import source_card_markdown_name
 from wikimaker_state import hash_text
 
 
@@ -274,6 +275,7 @@ def build_discovery_views(scan: dict[str, Any], diff: dict[str, list[str]], pipe
                 "label": label,
                 "type": "source",
                 "path": rel_path,
+                "source_page_filename": page.get("source_page_filename") or source_card_markdown_name(rel_path),
                 "page_role": page_role,
                 "status": _status_for_path(rel_path, diff),
                 "source_kind": page.get("source_kind") or record.get("source_kind") or "",
@@ -397,7 +399,7 @@ def write_discovery_views(config: WikiMakerConfig, scan: dict[str, Any], diff: d
         dashboard_lines.append("| Page | Score | Backlinks | Related | Used in | Outlinks | Status |")
         dashboard_lines.append("| --- | --- | --- | --- | --- | --- | --- |")
         for row in connected_rows[:12]:
-            safe_page_path = row['path'].replace('/', '__')
+            safe_page_path = row.get("source_page_filename") or source_card_markdown_name(str(row["path"]))
             label = _escape_md_cell(row['label'])
             dashboard_lines.append(
                 f"| [{label}](sources/{safe_page_path}) | {row['score']} | {row['backlinks']} | {row['related_count']} | {row['used_in_count']} | {row['outlinks']} | {row['status']} |"

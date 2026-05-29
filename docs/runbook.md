@@ -11,7 +11,8 @@ Put these in `.env`:
 - `WIKIMAKER_LLM_API_STYLE` — `ollama` for the current scaffold
 - `WIKIMAKER_ANALYSIS_MODEL` — model used for stage 1 source-page generation (recommended: your local Gemma 4 E4B MLX model)
 - `WIKIMAKER_REVIEW_MODEL` — model used for stage 3 verification
-- `WIKIMAKER_SYNTHESIS_MODE` — default `map_reduce`; use cached per-file cards, batch summaries, and a global merge
+- `WIKIMAKER_SYNTHESIS_MODE` — default `adk_workflow`; use ADK-owned source-card, batch, global, quality, and render stages
+- `WIKIMAKER_CARD_MODE` — default `metadata`; use `sampled`, `deep`, or `original` only when source text enrichment is explicitly needed
 - `WIKIMAKER_LLM_BATCH_SIZE` — source-card summaries per merge batch; default `50`
 - `WIKIMAKER_LLM_DEBUG` — `1` prints safe `llm start`, `llm done`, and `llm fail` lines while calls run
 - `WIKIMAKER_LLM_PREFLIGHT_TIMEOUT` — preflight timeout in seconds; default `20`
@@ -26,7 +27,7 @@ Put these in `.env`:
 - `WIKIMAKER_QUALITY_JUDGE_MODEL` — local model for quality judging; defaults to review model
 - The default local Ollama endpoint uses localhost, so the code can run without any external LLM dependency
 
-- `WIKIMAKER_USE_ADK` — retained for orchestration settings
+- `WIKIMAKER_USE_ADK` — `1` for the ADK-driven workflow path
 - `WIKIMAKER_ENABLE_ADK_TRACING` — `1` to export ADK/OpenTelemetry spans into SQLite
 - `WIKIMAKER_ENABLE_ADK_EVAL` — retained for compatibility; local-only mode does not use live ADK eval
 - `WIKIMAKER_ADK_TRACE_DB` — path for the ADK trace SQLite database
@@ -45,7 +46,9 @@ OPENAI_BASE_URL=http://127.0.0.1:11434
 WIKIMAKER_ANALYSIS_MODEL=gemma4:e4b-mlx
 WIKIMAKER_GENERATION_MODEL=gemma4:e4b-mlx
 WIKIMAKER_REVIEW_MODEL=gemma4:e4b-mlx
-WIKIMAKER_SYNTHESIS_MODE=map_reduce
+WIKIMAKER_USE_ADK=1
+WIKIMAKER_SYNTHESIS_MODE=adk_workflow
+WIKIMAKER_CARD_MODE=metadata
 WIKIMAKER_LLM_DEBUG=1
 WIKIMAKER_LLM_BATCH_SIZE=50
 WIKIMAKER_LLM_PREFLIGHT_TIMEOUT=20
@@ -56,7 +59,7 @@ WIKIMAKER_LLM_QUALITY_TIMEOUT=120
 WIKIMAKER_ENABLE_QUALITY_JUDGE=1
 ```
 
-Use your local Ollama models for per-file source cards, batch summaries, the global merge pass, and optional aggregate quality judging.
+Use your local Ollama models behind the ADK workflow stage boundary for SourceCard enrichment, batch summaries, the global merge pass, and optional aggregate quality judging.
 
 If Ollama is running on another machine, replace `127.0.0.1` with that machine's IP or hostname in `OPENAI_BASE_URL`.
 
@@ -96,6 +99,7 @@ Optional flags may override env vars:
 - `--allow-remote-llm`
 - `--prompt-profile`
 - `--synthesis-mode`
+- `--card-mode`
 - `--llm-batch-size`
 - `--test-limit`
 - `--force-reprocess`
@@ -203,13 +207,13 @@ Planned corpus families already have built-in prompt profiles: contacts, calenda
 - detects changed/new/removed files against the last snapshot
 - writes a change report
 - writes telemetry
-- writes deterministic source-summary stubs
+- writes canonical SourceCard JSON and matching SourceCard Markdown pages
 - stores updated state for the next run
 
 ## Current wiki compiler behavior
 - classifies model endpoint privacy before LLM use
 - applies automatic corpus-kind detection plus optional local prompt-profile overrides
-- asks the local LLM for source-page plans, wiki-set synthesis, and verification
+- runs ADK workflow stages for source-card construction, wiki-set synthesis, global merge, quality, and deterministic rendering
 - keeps wiki synthesis LLM-only by default; scan heuristics should not invent semantic links
 - writes `_llm_quality.md`, which judges only aggregate counts and never sends source text, filenames, titles, or snippets to the judge model
 - writes source summaries, wiki sets, topic/entity pages, backlinks, graph data, privacy status, health checks, browser data, telemetry, and state
