@@ -7,6 +7,25 @@ from typing import Any
 
 
 TELEMETRY_FILENAME = "latest.json"
+_PATH_KEYS = {
+    "corpus_root": "configured corpus",
+    "output_root": "generated output",
+    "state_root": "state root redacted",
+    "telemetry_root": "telemetry root redacted",
+    "adk_trace_db": "adk trace db redacted",
+    "adk_eval_dir": "adk eval dir redacted",
+    "prompt_profile_path": "prompt profile path redacted",
+}
+
+
+def sanitize_public_config(config: dict[str, Any]) -> dict[str, Any]:
+    public = dict(config)
+    for key, replacement in _PATH_KEYS.items():
+        if key in public and public[key]:
+            public[key] = replacement
+    if public.get("api_key"):
+        public["api_key"] = "redacted"
+    return public
 
 
 def build_telemetry(config: dict[str, Any], diff: dict[str, list[str]], scan: dict[str, Any]) -> dict[str, Any]:
@@ -19,7 +38,7 @@ def build_telemetry(config: dict[str, Any], diff: dict[str, list[str]], scan: di
     coverage = 0.0 if total == 0 else round((total - len([v for v in files.values() if v.get("error")])) / total, 4)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "config": config,
+        "config": sanitize_public_config(config),
         "scan": {
             "total_files": total,
             "added": added,

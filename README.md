@@ -40,6 +40,8 @@ Current stack:
 Important implementation facts:
 - ADK import namespace: `google.adk`
 - pinned package line in this environment: `google-adk==2.1.0`
+- `adk_workflow` fails fast if `import google.adk.workflow` is unavailable
+- repo-local ADK Skills live in `skills/source-card-skill`, `skills/privacy-boundary-skill`, and `skills/corpus-profile-skill`
 - local inference endpoint: `http://127.0.0.1:11434`
 - Python runtime: 3.11 or newer
 - real-corpus runs are intentionally local-only
@@ -128,6 +130,7 @@ Create/update the environment:
 ```bash
 conda env create -f environment.yml
 conda run -n wikimaker python -m pip install -r requirements.txt
+conda run -n wikimaker python -c "import google.adk.workflow"
 ```
 
 Machine-local settings live in `.env`, which is intentionally ignored. Start from the public template:
@@ -163,6 +166,7 @@ cd wikimaker
 
 conda env create -f environment.yml
 conda run -n wikimaker python -m pip install -r requirements.txt
+conda run -n wikimaker python -c "import google.adk.workflow"
 
 cp .env.example .env
 $EDITOR .env

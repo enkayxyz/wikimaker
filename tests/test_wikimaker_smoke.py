@@ -16,6 +16,8 @@ if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
 from wikimaker_config import WikiMakerConfig
+import wikimaker_adk_workflow
+from wikimaker_adk_workflow import WikiMakerAdkWorkflow
 from wikimaker_discovery import build_discovery_views, write_discovery_views, _source_stub_name
 from wikimaker_browser import write_browser_frontend
 from wikimaker_openai import SourcePagePlan, AnalysisPlan, GenerationPlan, preflight_llm_endpoint, _require_local_llm_config, _analysis_prompt, _generation_prompt, _compact_scan_for_prompt, _verification_prompt
@@ -28,6 +30,21 @@ from wikimaker_scanner import scan_corpus
 from wikimaker_source_card import source_card_markdown_name
 from wikimaker_state import diff_snapshots
 from wikimaker_telemetry import build_telemetry
+
+
+class FakeWorkflow:
+    def __init__(self, name: str, edges: list[Any]) -> None:
+        self.name = name
+        self.edges = edges
+
+
+class FakeSkillToolset:
+    def __init__(self, skills: list[Any]) -> None:
+        self.skills = skills
+
+
+class FakeSkillToolsetModule:
+    SkillToolset = FakeSkillToolset
 
 
 class WikiMakerSmokeTests(unittest.TestCase):
@@ -257,10 +274,13 @@ Journal entry and reflection about priorities.
         diff = diff_snapshots(previous, current)
         self.assertEqual(diff["added"], ["b.md"])
         self.assertEqual(diff["changed"], ["a.md"])
-        telemetry = build_telemetry({"use_adk": False}, diff, {"files": current["files"]})
+        telemetry = build_telemetry({"use_adk": False, "corpus_root": "/Users/private/corpus", "output_root": "/private/output", "api_key": "secret"}, diff, {"files": current["files"]})
         self.assertEqual(telemetry["scan"]["total_files"], 2)
         self.assertEqual(telemetry["scan"]["added"], 1)
         self.assertEqual(telemetry["scan"]["changed"], 1)
+        self.assertEqual(telemetry["config"]["corpus_root"], "configured corpus")
+        self.assertEqual(telemetry["config"]["output_root"], "generated output")
+        self.assertEqual(telemetry["config"]["api_key"], "redacted")
 
     def test_discovery_views_write_dashboard_stats_search_and_graph(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -805,6 +825,58 @@ Journal entry and reflection about priorities.
             quality_text = (output_root / "_llm_quality.md").read_text(encoding="utf-8")
             self.assertIn("Coverage fallback is scan-only", quality_text)
 
+    def test_public_artifacts_do_not_leak_absolute_paths_or_raw_prompts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corpus_root = root / "Users" / "private" / "corpus"
+            output_root = root / "output"
+            state_root = root / "state"
+            telemetry_root = root / "telemetry"
+            corpus_root.mkdir(parents=True, exist_ok=True)
+            (corpus_root / "alpha.md").write_text("# Alpha\n\nPrivate source text marker.\n", encoding="utf-8")
+            config = WikiMakerConfig(
+                corpus_root=corpus_root,
+                output_root=output_root,
+                state_root=state_root,
+                telemetry_root=telemetry_root,
+                synthesis_mode="coverage_fallback",
+                enable_quality_judge=False,
+                dry_run=False,
+            )
+            with patch("wikimaker_runner.preflight_llm_endpoint", side_effect=AssertionError("preflight should be skipped")):
+                run(config)
+            checked = []
+            for path in [*output_root.rglob("*.md"), *output_root.rglob("*.json"), telemetry_root / "latest.json"]:
+                if path.exists():
+                    checked.append(path)
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    self.assertNotIn("/Users/", text, str(path))
+                    self.assertNotIn("/private/", text, str(path))
+                    self.assertNotIn("/Volumes/", text, str(path))
+                    self.assertNotIn("SOURCE_MARKDOWN_EXCERPT", text, str(path))
+                    self.assertNotIn("raw prompt", text.lower(), str(path))
+                    self.assertNotRegex(text, r"(?i)(api[_-]?key|authorization)['\"]?\\s*[:=]\\s*['\"][^'\"]+")
+            self.assertTrue(checked)
+
+            dry_output = root / "dry-output"
+            dry_state = root / "dry-state"
+            dry_telemetry = root / "dry-telemetry"
+            dry_config = WikiMakerConfig(
+                corpus_root=corpus_root,
+                output_root=dry_output,
+                state_root=dry_state,
+                telemetry_root=dry_telemetry,
+                synthesis_mode="coverage_fallback",
+                enable_quality_judge=False,
+                dry_run=True,
+            )
+            run(dry_config)
+            preview_text = (dry_telemetry / "dry_run_preview.md").read_text(encoding="utf-8")
+            self.assertIn("Corpus root: configured corpus", preview_text)
+            self.assertIn("Output root: generated output", preview_text)
+            self.assertIn("State root: state root redacted", preview_text)
+            self.assertNotIn(str(corpus_root), preview_text)
+
     def test_map_reduce_cards_are_cached_and_force_paths_refresh_one_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -976,18 +1048,50 @@ Journal entry and reflection about priorities.
                 review_model="mock-review",
                 enable_quality_judge=False,
             )
-            with patch("wikimaker_runner.preflight_llm_endpoint", return_value={}), patch("wikimaker_cards._chat_completions", side_effect=fake_chat):
+            with (
+                patch("wikimaker_runner.preflight_llm_endpoint", return_value={}),
+                patch("wikimaker_cards._chat_completions", side_effect=fake_chat),
+                patch.object(wikimaker_adk_workflow, "ADK_WORKFLOW_AVAILABLE", True),
+                patch.object(wikimaker_adk_workflow, "ADK_SKILLS_AVAILABLE", True),
+                patch.object(wikimaker_adk_workflow, "Workflow", FakeWorkflow),
+                patch.object(wikimaker_adk_workflow, "load_skill_from_dir", side_effect=lambda path: {"path": str(path)}),
+                patch.object(wikimaker_adk_workflow, "skill_toolset", FakeSkillToolsetModule),
+            ):
                 result = run(config)
             self.assertEqual(result["config"]["synthesis_mode"], "adk_workflow")
             telemetry = json.loads((telemetry_root / "latest.json").read_text(encoding="utf-8"))
             self.assertIn("adk_workflow", telemetry["stages"])
+            self.assertEqual(telemetry["stages"]["adk_workflow"]["edge_count"], 8)
+            self.assertEqual(telemetry["stages"]["adk_workflow"]["skills"]["loaded"], ["source-card-skill", "privacy-boundary-skill", "corpus-profile-skill"])
             self.assertFalse(any("SOURCE_MARKDOWN_EXCERPT" in prompt for prompt in prompts))
             card_path = next((state_root / "cards").glob("*.json"))
             card_payload = json.loads(card_path.read_text(encoding="utf-8"))
             self.assertEqual(card_payload["signature"]["card_mode"], "metadata")
             source_path = output_root / "sources" / source_card_markdown_name("alpha.md")
             self.assertTrue(source_path.exists())
-            self.assertIn("Original source included: `False`", source_path.read_text(encoding="utf-8"))
+            source_text = source_path.read_text(encoding="utf-8")
+            self.assertIn(f"Card ID: `{card_payload['id']}`", source_text)
+            self.assertIn("Source markdown: `alpha.md`", source_text)
+            self.assertIn("Original source included: `False`", source_text)
+
+    def test_adk_workflow_requires_real_adk_availability(self) -> None:
+        with patch.object(wikimaker_adk_workflow, "ADK_WORKFLOW_AVAILABLE", False), patch.object(wikimaker_adk_workflow, "Workflow", None):
+            with self.assertRaisesRegex(RuntimeError, "requires Google ADK 2 Workflow support"):
+                WikiMakerAdkWorkflow(require_adk=True)
+
+    def test_adk_workflow_definition_has_real_edges_and_stages(self) -> None:
+        with (
+            patch.object(wikimaker_adk_workflow, "ADK_WORKFLOW_AVAILABLE", True),
+            patch.object(wikimaker_adk_workflow, "ADK_SKILLS_AVAILABLE", True),
+            patch.object(wikimaker_adk_workflow, "Workflow", FakeWorkflow),
+            patch.object(wikimaker_adk_workflow, "load_skill_from_dir", side_effect=lambda path: {"path": str(path)}),
+            patch.object(wikimaker_adk_workflow, "skill_toolset", FakeSkillToolsetModule),
+        ):
+            workflow = WikiMakerAdkWorkflow(require_adk=True)
+        self.assertEqual(len(workflow.edges), 8)
+        self.assertEqual(workflow.workflow.name, "wikimaker_compile")
+        self.assertEqual(workflow.stage_order, ["preflight", "scan", "source_facts", "source_cards", "batch_synthesis", "global_synthesis", "quality_judge", "render"])
+        self.assertEqual(workflow.skills["loaded"], ["source-card-skill", "privacy-boundary-skill", "corpus-profile-skill"])
 
     def test_failed_file_card_uses_fallback_and_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -47,6 +47,11 @@ from wikimaker_state import diff_snapshots, load_snapshot, save_snapshot
 from wikimaker_telemetry import build_telemetry, write_telemetry
 
 
+SAFE_CORPUS_LABEL = "configured corpus"
+SAFE_OUTPUT_LABEL = "generated output"
+SAFE_STATE_LABEL = "state root redacted"
+
+
 def ensure_workspace(config: WikiMakerConfig) -> None:
     config.output_root.mkdir(parents=True, exist_ok=True)
     config.state_root.mkdir(parents=True, exist_ok=True)
@@ -72,8 +77,8 @@ def write_change_report(
         "# WikiMaker Change Report",
         "",
         f"Generated: {datetime.now(timezone.utc).isoformat()}",
-        f"Corpus root: {config.corpus_root}",
-        f"Output root: {config.output_root}",
+        f"Corpus root: {SAFE_CORPUS_LABEL}",
+        f"Output root: {SAFE_OUTPUT_LABEL}",
         "",
         "## Diff summary",
         f"- Added: {len(diff['added'])}",
@@ -1005,9 +1010,9 @@ def _write_dry_run_preview(config: WikiMakerConfig, scan: dict[str, Any], diff: 
         "# WikiMaker Dry Run Preview",
         "",
         f"Generated: {datetime.now(timezone.utc).isoformat()}",
-        f"Corpus root: {config.corpus_root}",
-        f"Output root: {config.output_root}",
-        f"State root: {config.state_root}",
+        f"Corpus root: {SAFE_CORPUS_LABEL}",
+        f"Output root: {SAFE_OUTPUT_LABEL}",
+        f"State root: {SAFE_STATE_LABEL}",
         "",
         "## Summary",
         f"- Files scanned: {len(scan.get('files', {}))}",

@@ -37,6 +37,8 @@ Put these in `.env`:
 - Ollama does not need a key unless you put a proxy in front of it
 - `OPENAI_BASE_URL` — OpenAI-compatible endpoint for this machine; use `http://127.0.0.1:11434` only when Ollama runs locally, otherwise point it at the Ollama host/IP for the test machine
 
+`adk_workflow` requires `google.adk.workflow` to import successfully. If it is unavailable, WikiMaker stops before synthesis with a setup message instead of silently falling back.
+
 ### Local Ollama example
 
 ```env
@@ -71,6 +73,7 @@ Create/update runtime and test dependencies with:
 cd <repo-root>
 conda env create -f environment.yml
 conda run -n wikimaker python -m pip install -r requirements.txt
+conda run -n wikimaker python -c "import google.adk.workflow"
 ```
 
 For a new test machine, create machine-local settings from the template:
@@ -124,6 +127,8 @@ For quick debugging without waiting on the whole corpus:
 ```
 
 `freshcat-test` is equivalent to `freshcat --test-limit 10` unless `WIKIMAKER_TEST_LIMIT` is set. LLM call details are written to `telemetry/llm_calls.jsonl`, and the active or most recent call is written to `telemetry/current.json`. `wikimakerctl.sh status` prints both.
+
+ADK Skills are loaded from `skills/source-card-skill`, `skills/privacy-boundary-skill`, and `skills/corpus-profile-skill` when the local ADK package exposes Skills support. They provide modular guidance only; deterministic scanning and rendering stay in WikiMaker code.
 
 After a successful build, inspect:
 - `output/_privacy.md`
