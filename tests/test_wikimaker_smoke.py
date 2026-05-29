@@ -22,6 +22,7 @@ from wikimaker_openai import SourcePagePlan, AnalysisPlan, GenerationPlan, prefl
 from wikimaker_privacy import classify_endpoint_privacy
 from wikimaker_profiles import apply_prompt_profiles
 from wikimaker_health import build_wiki_health, write_health_report
+from wikimaker_llm_monitor import monitored_call
 from wikimaker_runner import run, write_source_stubs, write_root_index, write_knowledge_pages, write_privacy_report
 from wikimaker_scanner import scan_corpus
 from wikimaker_state import diff_snapshots
@@ -35,6 +36,43 @@ class WikiMakerSmokeTests(unittest.TestCase):
         self.assertEqual(config.output_root, Path("/tmp/corpus-root/wiki-build/output"))
         self.assertEqual(config.state_root, Path("/tmp/corpus-root/wiki-build/state"))
         self.assertEqual(config.telemetry_root, Path("/tmp/corpus-root/wiki-build/telemetry"))
+
+    def test_scan_corpus_can_limit_sorted_markdown_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus_root = Path(tmp) / "corpus"
+            corpus_root.mkdir()
+            for name in ("c.md", "a.md", "b.md"):
+                (corpus_root / name).write_text(f"# {name}\n", encoding="utf-8")
+            scan = scan_corpus(corpus_root, limit=2)
+            self.assertEqual(list(scan["files"].keys()), ["a.md", "b.md"])
+
+    def test_llm_monitor_writes_safe_success_and_failure_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            telemetry_root = Path(tmp) / "telemetry"
+            config = {"telemetry_root": str(telemetry_root), "llm_debug": False}
+            result = monitored_call(
+                config,
+                {
+                    "stage": "unit",
+                    "role": "analysis",
+                    "model": "mock-model",
+                    "relative_path": "/Users/private/source.md",
+                    "prompt": "raw prompt must not be logged",
+                    "prompt_chars": 27,
+                },
+                lambda: "ok",
+            )
+            self.assertEqual(result, "ok")
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                monitored_call(config, {"stage": "unit_fail", "role": "analysis", "model": "mock-model"}, lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+            log_text = (telemetry_root / "llm_calls.jsonl").read_text(encoding="utf-8")
+            current = json.loads((telemetry_root / "current.json").read_text(encoding="utf-8"))
+            self.assertIn("llm_call_start", log_text)
+            self.assertIn("llm_call_done", log_text)
+            self.assertIn("llm_call_fail", log_text)
+            self.assertNotIn("raw prompt", log_text)
+            self.assertNotIn("/Users/private", log_text)
+            self.assertEqual(current["event"], "llm_call_fail")
 
     def test_local_llm_config_rejects_non_local_endpoints(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Refusing non-local LLM endpoint"):
@@ -57,19 +95,21 @@ class WikiMakerSmokeTests(unittest.TestCase):
         self.assertEqual(base_url, "https://api.example.com/v1")
 
     def test_llm_preflight_reports_connection_failure_with_endpoint_context(self) -> None:
-        config = {
-            "provider": "ollama",
-            "openai_base_url": "http://127.0.0.1:11434",
-            "analysis_model": "gemma4:e4b-mlx",
-            "generation_model": "gemma4:e4b-mlx",
-            "review_model": "gemma4:e4b-mlx",
-        }
-        with patch(
-            "wikimaker_openai._chat_completions",
-            side_effect=RuntimeError("OpenAI-compatible request failed for http://127.0.0.1:11434/api/chat: <urlopen error [Errno 61] Connection refused>"),
-        ):
-            with self.assertRaisesRegex(RuntimeError, "Unable to reach local LLM endpoint 'http://127.0.0.1:11434' while checking analysis model 'gemma4:e4b-mlx'"):
-                preflight_llm_endpoint(config)
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "provider": "ollama",
+                "openai_base_url": "http://127.0.0.1:11434",
+                "analysis_model": "gemma4:e4b-mlx",
+                "generation_model": "gemma4:e4b-mlx",
+                "review_model": "gemma4:e4b-mlx",
+                "telemetry_root": str(Path(tmp) / "telemetry"),
+            }
+            with patch(
+                "wikimaker_openai._chat_completions",
+                side_effect=RuntimeError("OpenAI-compatible request failed for http://127.0.0.1:11434/api/chat: <urlopen error [Errno 61] Connection refused>"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Unable to reach local LLM endpoint 'http://127.0.0.1:11434' while checking analysis model 'gemma4:e4b-mlx'"):
+                    preflight_llm_endpoint(config)
 
     def test_scanner_extracts_title_headings_and_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -830,6 +870,7 @@ Journal entry and reflection about priorities.
                 generation_model="mock-generation",
                 review_model="mock-review",
                 synthesis_mode="map_reduce",
+                llm_debug=True,
                 enable_quality_judge=False,
             )
             with patch("wikimaker_runner.preflight_llm_endpoint", return_value={}), patch("wikimaker_cards._chat_completions", side_effect=fake_chat) as chat:
@@ -866,8 +907,51 @@ Journal entry and reflection about priorities.
             source_text = (output_root / "sources" / "notes__alpha.md").read_text(encoding="utf-8")
             self.assertIn("## Build telemetry", source_text)
             telemetry = json.loads((telemetry_root / "latest.json").read_text(encoding="utf-8"))
+            llm_log = (telemetry_root / "llm_calls.jsonl").read_text(encoding="utf-8")
+            current_call = json.loads((telemetry_root / "current.json").read_text(encoding="utf-8"))
+            self.assertIn("file_card", llm_log)
+            self.assertIn("batch_merge", llm_log)
+            self.assertIn("global_merge", llm_log)
+            self.assertIn("llm_calls", telemetry)
+            self.assertGreaterEqual(telemetry["llm_calls"]["total"], 1)
+            self.assertIn(current_call["event"], {"llm_call_done", "llm_call_fail"})
             self.assertIn("stages", telemetry)
             self.assertEqual(telemetry["stages"]["card"]["counts"]["forced"], 1)
+
+    def test_failed_file_card_uses_fallback_and_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus_root = Path(tmp) / "corpus"
+            output_root = Path(tmp) / "output"
+            state_root = Path(tmp) / "state"
+            telemetry_root = Path(tmp) / "telemetry"
+            (corpus_root / "notes").mkdir(parents=True)
+            (corpus_root / "notes" / "alpha.md").write_text("# Alpha\n", encoding="utf-8")
+
+            def fake_chat(_provider: str, _base_url: str, _api_key: str, _model: str, messages: list[dict[str, Any]], **_kwargs: Any) -> str:
+                prompt = messages[-1]["content"]
+                if "SOURCE_MARKDOWN_EXCERPT" in prompt:
+                    raise TimeoutError("timed out")
+                if "BATCH_SUMMARIES_JSON" in prompt:
+                    return json.dumps({"corpus_summary": "Fallback corpus", "wiki_sets": [], "confidence": 0.3})
+                return json.dumps({"name": "Batch 1", "summary": "Fallback batch", "confidence": 0.3})
+
+            config = WikiMakerConfig(
+                corpus_root=corpus_root,
+                output_root=output_root,
+                state_root=state_root,
+                telemetry_root=telemetry_root,
+                analysis_model="mock-analysis",
+                generation_model="mock-generation",
+                review_model="mock-review",
+                synthesis_mode="map_reduce",
+                enable_quality_judge=False,
+            )
+            with patch("wikimaker_runner.preflight_llm_endpoint", return_value={}), patch("wikimaker_cards._chat_completions", side_effect=fake_chat):
+                result = run(config)
+            self.assertEqual(result["scan"]["total_files"], 1)
+            card_payload = json.loads(next((state_root / "cards").glob("*.json")).read_text(encoding="utf-8"))
+            self.assertEqual(card_payload["card"]["source_quality"], "llm_failed")
+            self.assertTrue((output_root / "sources" / "notes__alpha.md").exists())
 
     def test_source_stub_names_are_sanitized_for_weird_paths(self) -> None:
 
@@ -955,6 +1039,20 @@ Journal entry and reflection about priorities.
             self.assertFalse(output_root.exists())
             self.assertFalse(state_root.exists())
             self.assertFalse(telemetry_root.exists())
+
+    def test_helper_usage_includes_freshcat_commands(self) -> None:
+        result = subprocess.run(
+            [str(REPO_ROOT / "wikimakerctl.sh")],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("freshcat", result.stdout)
+        self.assertIn("freshcat-test", result.stdout)
+        helper = (REPO_ROOT / "wikimakerctl.sh").read_text(encoding="utf-8")
+        self.assertIn('freshcat --test-limit "${WIKIMAKER_TEST_LIMIT:-10}"', helper)
 
     def test_source_stub_names_are_bounded_for_long_paths(self) -> None:
         long_rel_path = "a/" + ("verylongsegment" * 12) + "/b/" + ("anotherverylongsegment" * 12) + "/c/" + ("finalsegment" * 12) + ".md"

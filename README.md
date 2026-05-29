@@ -43,8 +43,8 @@ Important implementation facts:
 - local inference endpoint: `http://127.0.0.1:11434`
 - Python runtime: 3.11 or newer
 - real-corpus runs are intentionally local-only
-- there is no deterministic non-AI fallback wiki-generation path
-- default synthesis mode is `llm_only`; scan data may make sources visible, but wiki links/sets are considered valid only when produced by the LLM
+- map/reduce synthesis caches one per-file LLM card and reuses unchanged cards across runs
+- coverage fallback is available for scan-only/offline runs; `llm_only` is retained as a legacy debug mode
 
 Main code paths:
 - `code/wikimaker_scanner.py`
@@ -91,6 +91,13 @@ Suggested environment variables:
 - `WIKIMAKER_PROMPT_PROFILE`
 - `WIKIMAKER_SYNTHESIS_MODE` — default `map_reduce`; `coverage_fallback` is the offline scan-only path and `llm_only` is the legacy one-shot mode
 - `WIKIMAKER_LLM_BATCH_SIZE`
+- `WIKIMAKER_LLM_DEBUG` — `1` prints safe `llm start/done/fail` progress lines
+- `WIKIMAKER_LLM_PREFLIGHT_TIMEOUT`
+- `WIKIMAKER_LLM_FILE_TIMEOUT`
+- `WIKIMAKER_LLM_BATCH_TIMEOUT`
+- `WIKIMAKER_LLM_GLOBAL_TIMEOUT`
+- `WIKIMAKER_LLM_QUALITY_TIMEOUT`
+- `WIKIMAKER_TEST_LIMIT` — limit runs to the first N sorted Markdown files for quick debugging
 - `WIKIMAKER_FORCE_REPROCESS`
 - `WIKIMAKER_FORCE_PATHS`
 - `WIKIMAKER_ENABLE_QUALITY_JUDGE`
@@ -164,7 +171,8 @@ conda run -n wikimaker python -m unittest tests.test_wikimaker_smoke -v
 conda run -n wikimaker python -m compileall -q code tests
 
 ./wikimakerctl.sh status
-./wikimakerctl.sh fresh
+./wikimakerctl.sh freshcat-test
+./wikimakerctl.sh freshcat
 ```
 
 Dry run:
@@ -194,7 +202,7 @@ Mac helper:
 ./wikimakerctl.sh fresh-start
 ```
 
-For the real default corpus, `wikimakerctl.sh fresh` is the canonical full rebuild path: it resets only generated output/state/telemetry, never the source extracts, then runs in the foreground.
+For the real default corpus, `wikimakerctl.sh freshcat` is the monitored full rebuild path: it resets only generated output/state/telemetry, never the source extracts, then runs in the foreground while teeing all output to `/tmp/wikimaker.log`. For debugging, `wikimakerctl.sh freshcat-test` runs the same flow with `--test-limit 10`.
 
 `wikimakerctl.sh` is intentionally tuned for the primary macOS/local agent test setup and hardcodes `$HOME` defaults. For another machine, either set the `WIKIMAKER_*` environment variables or call `conda run -n wikimaker python wikimaker.py ...` with explicit roots.
 

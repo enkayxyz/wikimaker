@@ -13,6 +13,13 @@ Put these in `.env`:
 - `WIKIMAKER_REVIEW_MODEL` — model used for stage 3 verification
 - `WIKIMAKER_SYNTHESIS_MODE` — default `map_reduce`; use cached per-file cards, batch summaries, and a global merge
 - `WIKIMAKER_LLM_BATCH_SIZE` — source-card summaries per merge batch; default `50`
+- `WIKIMAKER_LLM_DEBUG` — `1` prints safe `llm start`, `llm done`, and `llm fail` lines while calls run
+- `WIKIMAKER_LLM_PREFLIGHT_TIMEOUT` — preflight timeout in seconds; default `20`
+- `WIKIMAKER_LLM_FILE_TIMEOUT` — per-file card timeout in seconds; default `120`
+- `WIKIMAKER_LLM_BATCH_TIMEOUT` — batch merge timeout in seconds; default `180`
+- `WIKIMAKER_LLM_GLOBAL_TIMEOUT` — global merge timeout in seconds; default `300`
+- `WIKIMAKER_LLM_QUALITY_TIMEOUT` — quality judge timeout in seconds; default `120`
+- `WIKIMAKER_TEST_LIMIT` — limit processing to the first N sorted Markdown files for quick debugging
 - `WIKIMAKER_FORCE_REPROCESS` — `1` to regenerate all per-file cards
 - `WIKIMAKER_FORCE_PATHS` — comma-separated relative paths or globs to regenerate selected per-file cards
 - `WIKIMAKER_ENABLE_QUALITY_JUDGE` — `1` to run an aggregate-only quality judge after generation
@@ -39,7 +46,13 @@ WIKIMAKER_ANALYSIS_MODEL=gemma4:e4b-mlx
 WIKIMAKER_GENERATION_MODEL=gemma4:e4b-mlx
 WIKIMAKER_REVIEW_MODEL=gemma4:e4b-mlx
 WIKIMAKER_SYNTHESIS_MODE=map_reduce
+WIKIMAKER_LLM_DEBUG=1
 WIKIMAKER_LLM_BATCH_SIZE=50
+WIKIMAKER_LLM_PREFLIGHT_TIMEOUT=20
+WIKIMAKER_LLM_FILE_TIMEOUT=120
+WIKIMAKER_LLM_BATCH_TIMEOUT=180
+WIKIMAKER_LLM_GLOBAL_TIMEOUT=300
+WIKIMAKER_LLM_QUALITY_TIMEOUT=120
 WIKIMAKER_ENABLE_QUALITY_JUDGE=1
 ```
 
@@ -84,6 +97,7 @@ Optional flags may override env vars:
 - `--prompt-profile`
 - `--synthesis-mode`
 - `--llm-batch-size`
+- `--test-limit`
 - `--force-reprocess`
 - `--force-path`
 - `--enable-quality-judge` / `--no-enable-quality-judge`
@@ -94,10 +108,18 @@ Optional flags may override env vars:
 For the default macOS corpus setup, the helper points at your configured corpus and output roots, so you can run it with no extra parameters:
 
 ```bash
-<repo-root>/wikimakerctl.sh fresh
+<repo-root>/wikimakerctl.sh freshcat
 ```
 
-`fresh` is the canonical full rebuild command for your real corpus. It resets generated output/state/telemetry only, keeps the source extracts read-only, prints the chosen corpus/output/state/telemetry/model settings, asks for confirmation, verifies the local Ollama server and model before scanning, and then runs in the foreground with live progress.
+`freshcat` is the canonical monitored rebuild command for your real corpus. It resets generated output/state/telemetry only, keeps the source extracts read-only, prints the chosen corpus/output/state/telemetry/model settings, asks for confirmation, verifies the local Ollama server and model before scanning, then runs in the foreground while teeing all output to `/tmp/wikimaker.log`.
+
+For quick debugging without waiting on the whole corpus:
+
+```bash
+<repo-root>/wikimakerctl.sh freshcat-test
+```
+
+`freshcat-test` is equivalent to `freshcat --test-limit 10` unless `WIKIMAKER_TEST_LIMIT` is set. LLM call details are written to `telemetry/llm_calls.jsonl`, and the active or most recent call is written to `telemetry/current.json`. `wikimakerctl.sh status` prints both.
 
 After a successful build, inspect:
 - `output/_privacy.md`
@@ -121,7 +143,7 @@ To wipe generated wiki output and start over cleanly, use:
 
 ```bash
 <repo-root>/wikimakerctl.sh reset
-<repo-root>/wikimakerctl.sh fresh
+<repo-root>/wikimakerctl.sh freshcat
 <repo-root>/wikimakerctl.sh fresh-start
 ```
 
@@ -163,7 +185,8 @@ conda run -n wikimaker python wikimaker.py --help
 conda run -n wikimaker python -m unittest tests.test_wikimaker_smoke -v
 conda run -n wikimaker python -m compileall -q code tests
 ./wikimakerctl.sh status
-./wikimakerctl.sh fresh
+./wikimakerctl.sh freshcat-test
+./wikimakerctl.sh freshcat
 ```
 
 Corpus families currently expected:

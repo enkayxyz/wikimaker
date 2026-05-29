@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from wikimaker_llm_monitor import monitored_call, sanitize_error
 from wikimaker_openai import _chat_completions, _parse_model_output, _require_local_llm_config
 from wikimaker_state import hash_text
 
@@ -167,18 +168,48 @@ def _load_source_excerpt(corpus_root: Path, rel_path: str) -> str:
         return ""
 
 
-def _card_from_llm(provider: str, base_url: str, api_key: str, model: str, corpus_root: Path, rel_path: str, record: dict[str, Any]) -> FileAnalysisCard:
+def _card_from_llm(
+    provider: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    corpus_root: Path,
+    rel_path: str,
+    record: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    index: int,
+    total: int,
+    cache_status: str,
+) -> FileAnalysisCard:
     text = _load_source_excerpt(corpus_root, rel_path)
-    response = _chat_completions(
-        provider,
-        base_url,
-        api_key,
-        model,
-        [
-            {"role": "system", "content": "You create one durable WikiMaker source card from one file."},
-            {"role": "user", "content": _file_prompt(rel_path, record, text)},
-        ],
-        temperature=0.0,
+    prompt = _file_prompt(rel_path, record, text)
+    timeout = int(config.get("llm_file_timeout", 120) or 120)
+    response = monitored_call(
+        config,
+        {
+            "stage": "file_card",
+            "role": "analysis",
+            "model": model,
+            "index": index,
+            "total": total,
+            "relative_path": rel_path,
+            "cache_status": cache_status,
+            "timeout_seconds": timeout,
+            "prompt_chars": len(prompt),
+        },
+        lambda: _chat_completions(
+            provider,
+            base_url,
+            api_key,
+            model,
+            [
+                {"role": "system", "content": "You create one durable WikiMaker source card from one file."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+            http_timeout=timeout,
+        ),
     )
     card = _parse_model_output(response, FileAnalysisCard)
     data = card.model_dump()
@@ -212,9 +243,9 @@ def build_file_cards(scan: dict[str, Any], config: dict[str, Any], diff: dict[st
     index: dict[str, Any] = {"generated_at": _utc_now(), "cards": {}}
     counts = {"hits": 0, "misses": 0, "forced": 0, "failed": 0}
 
-    for rel_path, record in sorted(files.items()):
-        if not isinstance(record, dict) or record.get("error"):
-            continue
+    processable = [(rel_path, record) for rel_path, record in sorted(files.items()) if isinstance(record, dict) and not record.get("error")]
+    total = len(processable)
+    for item_index, (rel_path, record) in enumerate(processable, start=1):
         signature = _card_signature(rel_path, record, config)
         cache_path = _card_path(state_root, rel_path)
         cached = _read_card(cache_path)
@@ -228,9 +259,21 @@ def build_file_cards(scan: dict[str, Any], config: dict[str, Any], diff: dict[st
             status = "forced" if forced else "miss"
             error = ""
             try:
-                card = _card_from_llm(provider, base_url, api_key, model, corpus_root, rel_path, record)
+                card = _card_from_llm(
+                    provider,
+                    base_url,
+                    api_key,
+                    model,
+                    corpus_root,
+                    rel_path,
+                    record,
+                    config,
+                    index=item_index,
+                    total=total,
+                    cache_status=status,
+                )
             except Exception as exc:
-                error = str(exc)
+                error = sanitize_error(exc)
                 card = _fallback_card(rel_path, record, reason=error)
                 counts["failed"] += 1
             duration_ms = int((time.monotonic() - started) * 1000)
@@ -335,25 +378,42 @@ def build_batch_summaries(cards: list[dict[str, Any]], config: dict[str, Any]) -
     provider, base_url, api_key = _require_local_llm_config(config)
     model = str(config.get("generation_model") or config.get("analysis_model") or "").strip()
     batch_size = int(config.get("llm_batch_size", 50) or 50)
+    chunked = _chunks(cards, batch_size)
     batches: list[dict[str, Any]] = []
     failed = 0
-    for index, batch in enumerate(_chunks(cards, batch_size), start=1):
+    timeout = int(config.get("llm_batch_timeout", 180) or 180)
+    total = len(chunked)
+    for index, batch in enumerate(chunked, start=1):
         error = ""
         try:
-            text = _chat_completions(
-                provider,
-                base_url,
-                api_key,
-                model,
-                [
-                    {"role": "system", "content": "You merge WikiMaker source cards into one batch summary."},
-                    {"role": "user", "content": _batch_prompt(batch, index)},
-                ],
-                temperature=0.0,
+            prompt = _batch_prompt(batch, index)
+            text = monitored_call(
+                config,
+                {
+                    "stage": "batch_merge",
+                    "role": "generation",
+                    "model": model,
+                    "index": index,
+                    "total": total,
+                    "timeout_seconds": timeout,
+                    "prompt_chars": len(prompt),
+                },
+                lambda: _chat_completions(
+                    provider,
+                    base_url,
+                    api_key,
+                    model,
+                    [
+                        {"role": "system", "content": "You merge WikiMaker source cards into one batch summary."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.0,
+                    http_timeout=timeout,
+                ),
             )
             synthesis = _parse_model_output(text, BatchSynthesis)
         except Exception as exc:
-            error = str(exc)
+            error = sanitize_error(exc)
             failed += 1
             synthesis = _fallback_batch(batch, index, reason=error)
         batches.append(
@@ -425,20 +485,35 @@ def build_global_synthesis(cards: list[dict[str, Any]], batches: list[dict[str, 
     model = str(config.get("generation_model") or config.get("analysis_model") or "").strip()
     error = ""
     try:
-        text = _chat_completions(
-            provider,
-            base_url,
-            api_key,
-            model,
-            [
-                {"role": "system", "content": "You merge WikiMaker batch summaries into a corpus-level wiki plan."},
-                {"role": "user", "content": _global_prompt(batches)},
-            ],
-            temperature=0.0,
+        prompt = _global_prompt(batches)
+        timeout = int(config.get("llm_global_timeout", 300) or 300)
+        text = monitored_call(
+            config,
+            {
+                "stage": "global_merge",
+                "role": "generation",
+                "model": model,
+                "index": 1,
+                "total": 1,
+                "timeout_seconds": timeout,
+                "prompt_chars": len(prompt),
+            },
+            lambda: _chat_completions(
+                provider,
+                base_url,
+                api_key,
+                model,
+                [
+                    {"role": "system", "content": "You merge WikiMaker batch summaries into a corpus-level wiki plan."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                http_timeout=timeout,
+            ),
         )
         global_plan = _parse_model_output(text, GlobalSynthesis)
     except Exception as exc:
-        error = str(exc)
+        error = sanitize_error(exc)
         global_plan = _fallback_global(cards, batches, reason=error)
     return global_plan.model_dump(), {"status": "fallback" if error else "ok", "error": error, "model": model}
 

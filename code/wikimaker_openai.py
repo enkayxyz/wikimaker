@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field
 
+from wikimaker_llm_monitor import monitored_call
 from wikimaker_privacy import classify_endpoint_privacy
 
 T = TypeVar("T", bound=BaseModel)
@@ -312,22 +313,34 @@ def _configured_model_pairs(config: dict[str, Any]) -> list[tuple[str, str]]:
     return list(dict.fromkeys(model_pairs))
 
 
-def preflight_llm_endpoint(config: dict[str, Any], *, timeout: int = 15) -> dict[str, Any]:
+def preflight_llm_endpoint(config: dict[str, Any], *, timeout: int | None = None) -> dict[str, Any]:
     provider, base_url, api_key = _require_local_llm_config(config)
+    timeout = int(timeout if timeout is not None else config.get("llm_preflight_timeout", 20) or 20)
     checked_models: list[dict[str, str]] = []
     for role, model in _configured_model_pairs(config):
+        prompt = "Return exactly one word: OK."
         try:
-            _chat_completions(
-                provider,
-                base_url,
-                api_key,
-                model,
-                [
-                    {"role": "system", "content": "You are WikiMaker's connection preflight."},
-                    {"role": "user", "content": "Return exactly one word: OK."},
-                ],
-                temperature=0.0,
-                http_timeout=timeout,
+            monitored_call(
+                config,
+                {
+                    "stage": "preflight",
+                    "role": role,
+                    "model": model,
+                    "timeout_seconds": timeout,
+                    "prompt_chars": len(prompt),
+                },
+                lambda model=model, prompt=prompt: _chat_completions(
+                    provider,
+                    base_url,
+                    api_key,
+                    model,
+                    [
+                        {"role": "system", "content": "You are WikiMaker's connection preflight."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.0,
+                    http_timeout=timeout,
+                ),
             )
         except Exception as exc:
             raise RuntimeError(
@@ -383,6 +396,8 @@ def _chat_completions(
         raise RuntimeError(f"OpenAI-compatible request failed for {endpoint}: HTTP {exc.code}: {detail}") from exc
     except URLError as exc:
         raise RuntimeError(f"OpenAI-compatible request failed for {endpoint}: {exc}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(f"OpenAI-compatible request timed out for {endpoint} after {http_timeout}s") from exc
 
     data = json.loads(raw)
     if provider == "ollama":
@@ -473,16 +488,29 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
 
     scan_prompt = _compact_scan_for_prompt(scan, diff, limit=sample_files)
     errors: list[str] = []
+    legacy_timeout = int(config.get("llm_global_timeout", 300) or 300)
 
-    analysis_text = _chat_completions(
-        provider,
-        base_url,
-        api_key,
-        analysis_model,
-        [
-            {"role": "system", "content": "You are WikiMaker's analysis pass."},
-            {"role": "user", "content": _analysis_prompt(scan_prompt)},
-        ],
+    analysis_prompt = _analysis_prompt(scan_prompt)
+    analysis_text = monitored_call(
+        config,
+        {
+            "stage": "legacy_analysis",
+            "role": "analysis",
+            "model": analysis_model,
+            "timeout_seconds": legacy_timeout,
+            "prompt_chars": len(analysis_prompt),
+        },
+        lambda: _chat_completions(
+            provider,
+            base_url,
+            api_key,
+            analysis_model,
+            [
+                {"role": "system", "content": "You are WikiMaker's analysis pass."},
+                {"role": "user", "content": analysis_prompt},
+            ],
+            http_timeout=legacy_timeout,
+        ),
     )
     try:
         analysis_result = _parse_model_output(analysis_text, AnalysisPlan)
@@ -564,15 +592,27 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
         }
     )
 
-    generation_text = _chat_completions(
-        provider,
-        base_url,
-        api_key,
-        generation_model,
-        [
-            {"role": "system", "content": "You are WikiMaker's generation pass."},
-            {"role": "user", "content": _generation_prompt(scan_prompt, analysis_result)},
-        ],
+    generation_prompt = _generation_prompt(scan_prompt, analysis_result)
+    generation_text = monitored_call(
+        config,
+        {
+            "stage": "legacy_generation",
+            "role": "generation",
+            "model": generation_model,
+            "timeout_seconds": legacy_timeout,
+            "prompt_chars": len(generation_prompt),
+        },
+        lambda: _chat_completions(
+            provider,
+            base_url,
+            api_key,
+            generation_model,
+            [
+                {"role": "system", "content": "You are WikiMaker's generation pass."},
+                {"role": "user", "content": generation_prompt},
+            ],
+            http_timeout=legacy_timeout,
+        ),
     )
     try:
         generation_result = _parse_model_output(generation_text, GenerationPlan)
@@ -603,15 +643,27 @@ def run_pipeline(scan: dict[str, Any], diff: dict[str, list[str]], config: dict[
         }
     )
 
-    verification_text = _chat_completions(
-        provider,
-        base_url,
-        api_key,
-        review_model,
-        [
-            {"role": "system", "content": "You are WikiMaker's verification pass."},
-            {"role": "user", "content": _verification_prompt(scan_prompt, analysis_result, generation_result)},
-        ],
+    verification_prompt = _verification_prompt(scan_prompt, analysis_result, generation_result)
+    verification_text = monitored_call(
+        config,
+        {
+            "stage": "legacy_verification",
+            "role": "review",
+            "model": review_model,
+            "timeout_seconds": legacy_timeout,
+            "prompt_chars": len(verification_prompt),
+        },
+        lambda: _chat_completions(
+            provider,
+            base_url,
+            api_key,
+            review_model,
+            [
+                {"role": "system", "content": "You are WikiMaker's verification pass."},
+                {"role": "user", "content": verification_prompt},
+            ],
+            http_timeout=legacy_timeout,
+        ),
     )
     try:
         verification_result = _parse_model_output(verification_text, VerificationPlan)

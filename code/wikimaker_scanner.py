@@ -188,13 +188,15 @@ def scan_markdown_file(path: Path, corpus_root: Path) -> dict[str, Any]:
     }
 
 
-def scan_corpus(corpus_root: Path, *, progress_every: int = 0) -> dict[str, Any]:
+def scan_corpus(corpus_root: Path, *, progress_every: int = 0, limit: int = 0) -> dict[str, Any]:
     corpus_root = corpus_root.expanduser().resolve()
     paths = [
         path
         for path in sorted(corpus_root.rglob("*.md"))
         if not any(part in {"wiki-build", ".git", "node_modules"} for part in path.parts)
     ]
+    if limit > 0:
+        paths = paths[:limit]
     files: dict[str, Any] = {}
     total = len(paths)
     for index, path in enumerate(paths, start=1):

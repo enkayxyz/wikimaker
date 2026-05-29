@@ -26,6 +26,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--adk-eval-dir", help="Directory for ADK eval artifacts")
     parser.add_argument("--sample-files", type=int, help="Maximum number of files to include in the model prompt sample window")
     parser.add_argument("--llm-batch-size", type=int, help="Number of per-file cards to include in each merge batch")
+    parser.add_argument("--test-limit", type=int, help="Limit run to the first N Markdown files after sorting")
     parser.add_argument("--progress-every", type=int, help="Print a scan progress line every N files")
     parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=None, help="Run without future write actions")
     parser.add_argument("--allow-remote-llm", action=argparse.BooleanOptionalAction, default=None, help="Allow remote model endpoints after privacy classification")
@@ -57,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
             adk_eval_dir=args.adk_eval_dir,
             sample_files=args.sample_files,
             llm_batch_size=args.llm_batch_size,
+            test_limit=args.test_limit,
             progress_every=args.progress_every,
             dry_run=args.dry_run,
             allow_remote_llm=args.allow_remote_llm,

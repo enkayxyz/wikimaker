@@ -30,6 +30,7 @@ except Exception:  # pragma: no cover
     trace = _NoopTrace()  # type: ignore[assignment]
 
 from wikimaker_cards import run_map_reduce_pipeline
+from wikimaker_llm_monitor import summarize_llm_calls
 from wikimaker_openai import GenerationPlan, AnalysisPlan, VerificationPlan, preflight_llm_endpoint, run_pipeline
 from wikimaker_config import WikiMakerConfig
 from wikimaker_discovery import write_discovery_views, _source_stub_name, _wiki_set_dir_name
@@ -1071,7 +1072,11 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
 
         with tracer.start_as_current_span("wikimaker.scan"):
             previous = load_snapshot(config.state_root)
-            scan = scan_corpus(config.corpus_root, progress_every=int(config.as_dict().get("progress_every", 0) or 0))
+            scan = scan_corpus(
+                config.corpus_root,
+                progress_every=int(config.as_dict().get("progress_every", 0) or 0),
+                limit=int(config.as_dict().get("test_limit", 0) or 0),
+            )
             scan = apply_prompt_profiles(scan, corpus_root=config.corpus_root, profile_path=config.prompt_profile_path or None)
             current = {"generated_at": datetime.now(timezone.utc).isoformat(), "files": scan.get("files", {})}
             diff = diff_snapshots(previous, current)
@@ -1101,6 +1106,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
             telemetry["observability"] = {
                 "tracing": tracing_state,
             }
+            telemetry["llm_calls"] = summarize_llm_calls(config.telemetry_root)
             telemetry_path = write_telemetry(config.telemetry_root, telemetry)
 
         if config.dry_run:
@@ -1152,6 +1158,7 @@ def run(config: WikiMakerConfig) -> dict[str, Any]:
 
         telemetry["observability"]["evaluation"] = eval_result
         telemetry["llm_quality"] = quality
+        telemetry["llm_calls"] = summarize_llm_calls(config.telemetry_root)
         telemetry_path = write_telemetry(config.telemetry_root, telemetry)
 
         result = {

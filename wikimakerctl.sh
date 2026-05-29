@@ -74,6 +74,7 @@ print_status() {
     echo "Recent log:"
     tail -20 "$LOG_FILE"
   fi
+  print_llm_status
   echo
   echo "Artifacts:"
   for artifact in \
@@ -89,6 +90,70 @@ print_status() {
       echo "  missing: $artifact"
     fi
   done
+}
+
+print_llm_status() {
+  local current_file="$telemetry_root/current.json"
+  local calls_file="$telemetry_root/llm_calls.jsonl"
+  echo
+  echo "LLM telemetry:"
+  echo "  call log: $calls_file"
+  if [[ -f "$current_file" ]]; then
+    python3 - "$current_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"  current: unreadable ({exc})")
+    raise SystemExit(0)
+meta = data.get("meta") or {}
+parts = []
+for key in ("event", "status", "duration_ms"):
+    value = data.get(key)
+    if value not in (None, ""):
+        parts.append(f"{key}={value}")
+for key in ("stage", "role", "index", "total", "relative_path", "cache_status", "model", "timeout_seconds"):
+    value = meta.get(key)
+    if value not in (None, ""):
+        label = "timeout" if key == "timeout_seconds" else key
+        parts.append(f"{label}={value}")
+print("  current: " + (" ".join(str(part) for part in parts) if parts else "present"))
+PY
+  else
+    echo "  current: none"
+  fi
+  if [[ -f "$calls_file" ]]; then
+    echo "  recent:"
+    python3 - "$calls_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()[-5:]:
+    try:
+        data = json.loads(line)
+    except Exception:
+        continue
+    meta = data.get("meta") or {}
+    parts = [str(data.get("event") or "llm_event")]
+    for key in ("status", "duration_ms"):
+        value = data.get(key)
+        if value not in (None, ""):
+            parts.append(f"{key}={value}")
+    for key in ("stage", "role", "index", "total", "relative_path", "cache_status"):
+        value = meta.get(key)
+        if value not in (None, ""):
+            parts.append(f"{key}={value}")
+    print("    " + " ".join(parts))
+PY
+  else
+    echo "  recent: none"
+  fi
 }
 
 run_wikimaker() {
@@ -323,6 +388,17 @@ case "$cmd" in
     reset_wikimaker "$@"
     "$0" run "$@"
     ;;
+  freshcat)
+    reset_wikimaker "$@"
+    mkdir -p "$(dirname "$LOG_FILE")"
+    : > "$LOG_FILE"
+    echo "Foreground log: $LOG_FILE"
+    echo "LLM call log: $telemetry_root/llm_calls.jsonl"
+    "$0" run "$@" 2>&1 | tee -a "$LOG_FILE"
+    ;;
+  freshcat-test)
+    "$0" freshcat --test-limit "${WIKIMAKER_TEST_LIMIT:-10}" "$@"
+    ;;
   rebuild)
     reset_wikimaker "$@"
     "$0" start "$@"
@@ -333,7 +409,7 @@ case "$cmd" in
     ;;
   *)
     cat <<EOF
-Usage: $0 {start|stop|status|restart|reset|rerun|fresh|rebuild|fresh-start|run|logs}
+Usage: $0 {start|stop|status|restart|reset|rerun|fresh|freshcat|freshcat-test|rebuild|fresh-start|run|logs}
 
 Modes:
   run     print the plan, ask for confirmation, and run in the foreground
@@ -342,6 +418,8 @@ Modes:
   reset   stop the runner if needed, then delete output/state/telemetry only
   rerun   reset first, then run in the foreground
   fresh   alias for rerun
+  freshcat reset first, run in the foreground, and tee all output to $LOG_FILE
+  freshcat-test run freshcat with --test-limit \${WIKIMAKER_TEST_LIMIT:-10}
   rebuild reset first, then start in the background
   fresh-start alias for rebuild
 

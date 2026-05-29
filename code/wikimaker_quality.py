@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 from typing import Any
 
+from wikimaker_llm_monitor import monitored_call, sanitize_error
 from wikimaker_openai import _chat_completions, _require_local_llm_config
 
 
@@ -97,16 +98,28 @@ def run_redacted_quality_judge(metrics: dict[str, Any], config: dict[str, Any]) 
             "Flag weak LLM output when coverage, graph edges, schema validity, or verification confidence are poor.\n\n"
             f"AGGREGATE_METRICS_JSON:\n{json.dumps(metrics, indent=2, sort_keys=True)}"
         )
-        text = _chat_completions(
-            provider,
-            base_url,
-            api_key,
-            judge_model,
-            [
-                {"role": "system", "content": "Judge only aggregate WikiMaker quality metrics. Do not ask for or infer private content."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.0,
+        timeout = int(config.get("llm_quality_timeout", 120) or 120)
+        text = monitored_call(
+            config,
+            {
+                "stage": "quality_judge",
+                "role": "quality",
+                "model": judge_model,
+                "timeout_seconds": timeout,
+                "prompt_chars": len(prompt),
+            },
+            lambda: _chat_completions(
+                provider,
+                base_url,
+                api_key,
+                judge_model,
+                [
+                    {"role": "system", "content": "Judge only aggregate WikiMaker quality metrics. Do not ask for or infer private content."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                http_timeout=timeout,
+            ),
         )
         parsed = json.loads(text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip())
         if not isinstance(parsed, dict):
@@ -122,7 +135,7 @@ def run_redacted_quality_judge(metrics: dict[str, Any], config: dict[str, Any]) 
         return {
             "used": False,
             "status": fallback["status"],
-            "findings": [*fallback["findings"], f"Quality judge failed: {exc}"],
+            "findings": [*fallback["findings"], f"Quality judge failed: {sanitize_error(exc)}"],
             "recommendation": fallback["recommendation"],
         }
 
